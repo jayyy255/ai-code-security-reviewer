@@ -12,7 +12,7 @@ const ScanHistory = require('./models/ScanHistory');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://admin:nopassword123@cluster0.qdavyns.mongodb.net/?appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI;
 const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
 const FRONTEND_URL = process.env.FRONTEND_URL || true;
 
