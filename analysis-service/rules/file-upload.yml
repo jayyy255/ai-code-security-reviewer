@@ -1,0 +1,30 @@
+rules:
+  - id: file-upload-zip-slip
+    languages: [python, java, javascript, typescript, go]
+    message: "Potential Zip Slip path traversal during archive extraction."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"]
+      owasp: ["A01:2021 - Broken Access Control"]
+      category: file-upload
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $ZIP.extractall(...)
+      - pattern: zipfile.ZipFile(...).extractall(...)
+
+  - id: file-upload-unrestricted-destination
+    languages: [javascript, typescript, python]
+    message: "File uploaded without filename sanitization, allowing arbitrary file overwrites."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-434: Unrestricted Upload of File with Dangerous Type"]
+      owasp: ["A04:2021 - Insecure Design"]
+      category: file-upload
+      likelihood: MEDIUM
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: fs.writeFileSync($DIR + "/" + req.file.originalname, ...)
+      - pattern: open(os.path.join($DIR, file.filename), "wb")

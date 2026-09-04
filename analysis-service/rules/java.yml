@@ -1,0 +1,61 @@
+rules:
+  - id: java-sql-injection-concat
+    languages: [java]
+    message: "SQL query constructed via string concatenation instead of PreparedStatement."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $STMT.executeQuery($X + $Y)
+      - pattern: $STMT.executeUpdate($X + $Y)
+      - pattern: $STMT.execute($X + $Y)
+
+  - id: java-command-injection-runtime
+    languages: [java]
+    message: "Potential OS command injection via Runtime.getRuntime().exec() or ProcessBuilder."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: Runtime.getRuntime().exec(...)
+      - pattern: new ProcessBuilder(...)
+
+  - id: java-insecure-deserialization
+    languages: [java]
+    message: "Deserialization of untrusted data using ObjectInputStream without filtering."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502: Deserialization of Untrusted Data"]
+      owasp: ["A08:2021 - Software and Data Integrity Failures"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: (new ObjectInputStream(...)).readObject()
+      - pattern: $OIS.readObject()
+
+  - id: java-xxe-vulnerability
+    languages: [java]
+    message: "XML parser configured without disabling external DTDs and entities."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-611: Improper Restriction of XML External Entity Reference"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: DocumentBuilderFactory.newInstance()
+      - pattern: SAXParserFactory.newInstance()

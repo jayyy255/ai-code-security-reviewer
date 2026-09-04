@@ -1,0 +1,33 @@
+rules:
+  - id: c-buffer-overflow-strcpy
+    languages: [c, cpp]
+    message: "Use of unsafe strcpy/strcat without bounds checking causes buffer overflows."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-120: Buffer Copy without Checking Size of Input ('Classic Buffer Overflow')"]
+      owasp: ["A03:2021 - Injection"]
+      category: memory-safety
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: strcpy(...)
+      - pattern: std::strcpy(...)
+      - pattern: strcat(...)
+      - pattern: std::strcat(...)
+      - pattern: gets(...)
+
+  - id: c-format-string-vulnerability
+    languages: [c, cpp]
+    message: "Direct user input passed as format string argument to printf/sprintf."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-134: Use of Externally-Controlled Format String"]
+      owasp: ["A03:2021 - Injection"]
+      category: memory-safety
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: printf($VAR)
+      - pattern: sprintf($BUF, $VAR)

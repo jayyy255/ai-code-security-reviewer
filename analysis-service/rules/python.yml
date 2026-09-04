@@ -1,0 +1,162 @@
+rules:
+  - id: python-sql-injection-format
+    languages: [python]
+    message: "SQL query built with string formatting or concatenation rather than parameterized placeholders."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $CURSOR.execute(f"...", ...)
+      - pattern: $CURSOR.execute("..." % (...), ...)
+      - pattern: $CURSOR.execute("...".format(...), ...)
+      - pattern: $CURSOR.execute("..." + $VAR, ...)
+      - pattern: $CURSOR.execute($X + $Y, ...)
+
+  - id: python-command-injection
+    languages: [python]
+    message: "Direct OS command execution with user-controlled input."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.Popen(..., shell=True)
+      - pattern: subprocess.run(..., shell=True)
+      - pattern: subprocess.call(..., shell=True)
+      - pattern: subprocess.check_output(..., shell=True)
+
+  - id: python-insecure-deserialization-pickle
+    languages: [python]
+    message: "Insecure deserialization using pickle allows arbitrary code execution."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502: Deserialization of Untrusted Data"]
+      owasp: ["A08:2021 - Software and Data Integrity Failures"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: _pickle.loads(...)
+      - pattern: _pickle.load(...)
+      - pattern: yaml.load($X)
+
+  - id: python-template-injection-jinja2
+    languages: [python]
+    message: "Jinja2 template rendered from dynamic string rather than a template file (Server-Side Template Injection)."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-1336: Improper Neutralization of Special Elements Used in a Template Engine"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: jinja2.Template($INPUT).render(...)
+      - pattern: jinja2.Environment(...).from_string($INPUT)
+      - pattern: render_template_string($INPUT, ...)
+
+  - id: python-weak-cryptography
+    languages: [python]
+    message: "Weak or broken cryptographic algorithm in use (MD5, SHA1, DES)."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-327: Use of a Broken or Risky Cryptographic Algorithm"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      category: crypto
+      likelihood: HIGH
+      impact: MEDIUM
+      confidence: HIGH
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+      - pattern: Crypto.Cipher.DES.new(...)
+
+  - id: python-insecure-mktemp
+    languages: [python]
+    message: "Use of tempfile.mktemp() is vulnerable to race conditions (TOCTOU). Use NamedTemporaryFile or TemporaryDirectory."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-377: Insecure Temporary File"]
+      owasp: ["A01:2021 - Broken Access Control"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern: tempfile.mktemp(...)
+
+  - id: python-weak-random-security
+    languages: [python]
+    message: "Standard random module is cryptographically insecure for tokens/passwords. Use secrets module instead."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      category: crypto
+      likelihood: HIGH
+      impact: MEDIUM
+      confidence: HIGH
+    pattern-either:
+      - pattern: random.random()
+      - pattern: random.randint(...)
+      - pattern: random.choice(...)
+
+  - id: python-debug-mode-enabled
+    languages: [python]
+    message: "Flask/Django debug mode is enabled. Debug mode exposes sensitive traceback and remote debugging endpoints."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-489: Active Debug Code"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: config
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $APP.run(..., debug=True, ...)
+      - pattern: DEBUG = True
+
+  - id: python-ssrf-unvalidated-url
+    languages: [python]
+    message: "Unvalidated URL passed directly to HTTP request handler (potential Server-Side Request Forgery)."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-918: Server-Side Request Forgery (SSRF)"]
+      owasp: ["A10:2021 - Server-Side Request Forgery (SSRF)"]
+      category: injection
+      likelihood: MEDIUM
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: requests.get($URL, verify=False, ...)
+      - pattern: requests.post($URL, verify=False, ...)
+      - pattern: urllib.request.urlopen($URL, ...)
+
+  - id: python-tarfile-arbitrary-extraction
+    languages: [python]
+    message: "TarFile.extractall() without path filtering is vulnerable to Treason/Zip Slip directory traversal."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"]
+      owasp: ["A01:2021 - Broken Access Control"]
+      category: file-upload
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $TAR.extractall(...)
+      - pattern: tarfile.open(...).extractall(...)

@@ -1,0 +1,31 @@
+rules:
+  - id: ruby-command-injection-system
+    languages: [ruby]
+    message: "Untrusted parameter passed directly to system command execution."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: system($CMD)
+      - pattern: exec($CMD)
+      - pattern: "`...`"
+
+  - id: ruby-insecure-deserialization-marshal
+    languages: [ruby]
+    message: "Deserialization using Marshal.load allows Remote Code Execution."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502: Deserialization of Untrusted Data"]
+      owasp: ["A08:2021 - Software and Data Integrity Failures"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: Marshal.load(...)
+      - pattern: YAML.load($UNTRUSTED)

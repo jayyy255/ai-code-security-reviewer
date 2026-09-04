@@ -1,0 +1,50 @@
+rules:
+  - id: go-command-injection-exec
+    languages: [go]
+    message: "OS command constructed dynamically using exec.Command."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: exec.Command("sh", "-c", $CMD)
+      - pattern: exec.Command("bash", "-c", $CMD)
+      - pattern: exec.Command("cmd.exe", "/c", $CMD)
+
+  - id: go-sql-injection-format
+    languages: [go]
+    message: "SQL statement created with fmt.Sprintf instead of parameter placeholders."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $DB.Query(fmt.Sprintf(...))
+      - pattern: $DB.Exec(fmt.Sprintf(...))
+      - pattern: $DB.QueryRow(fmt.Sprintf(...))
+
+  - id: go-insecure-tls-config
+    languages: [go]
+    message: "InsecureSkipVerify set to true disables TLS certificate validation."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      category: crypto
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern: |
+      &tls.Config{
+        ...,
+        InsecureSkipVerify: true,
+        ...
+      }

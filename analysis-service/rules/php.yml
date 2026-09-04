@@ -1,0 +1,47 @@
+rules:
+  - id: php-eval-execution
+    languages: [php]
+    message: "Detected eval() or assert() execution with untrusted data."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: assert(...)
+
+  - id: php-sql-injection-query
+    languages: [php]
+    message: "SQL statement concatenated directly in mysqli_query or PDO query."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: mysqli_query($CONN, $QUERY . $VAL)
+      - pattern: $PDO->query($QUERY . $VAL)
+
+  - id: php-file-inclusion
+    languages: [php]
+    message: "Dynamic file inclusion allows Remote / Local File Inclusion (RFI / LFI)."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-98: Improper Control of Generation of Code ('PHP Remote File Inclusion')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: include($_GET[...])
+      - pattern: require($_GET[...])
+      - pattern: include_once($_GET[...])
+      - pattern: require_once($_GET[...])

@@ -1,0 +1,31 @@
+rules:
+  - id: rust-unsafe-block-risk
+    languages: [rust]
+    message: "Unsafe block detected. Manual verification is required to prevent memory corruption and undefined behavior."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-119: Improper Restriction of Operations within the Bounds of a Memory Buffer"]
+      owasp: ["A08:2021 - Software and Data Integrity Failures"]
+      category: memory-safety
+      likelihood: MEDIUM
+      impact: HIGH
+      confidence: MEDIUM
+    pattern: |
+      unsafe {
+        ...
+      }
+
+  - id: rust-command-injection-process
+    languages: [rust]
+    message: "Command executed via std::process::Command with raw shell string."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: std::process::Command::new("sh").arg("-c").arg($CMD)
+      - pattern: Command::new("sh").arg("-c").arg($CMD)

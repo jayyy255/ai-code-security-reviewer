@@ -1,0 +1,58 @@
+rules:
+  - id: dockerfile-running-as-root
+    languages: [dockerfile]
+    message: "Docker container configured to run as root user without specifying a USER directive."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-250: Execution with Unnecessary Privileges"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: config
+      likelihood: HIGH
+      impact: HIGH
+      confidence: MEDIUM
+    pattern: |
+      USER root
+
+  - id: dockerfile-add-instead-of-copy
+    languages: [dockerfile]
+    message: "Use of ADD directive instead of COPY can lead to unintended remote extraction risks."
+    severity: INFO
+    metadata:
+      cwe: ["CWE-829: Inclusion of Functionality from Untrusted Control Sphere"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: config
+      likelihood: MEDIUM
+      impact: MEDIUM
+      confidence: HIGH
+    pattern: |
+      ADD $SRC $DST
+
+  - id: terraform-open-security-group
+    languages: [terraform]
+    message: "Security group ingress rule opens port access to the entire world (0.0.0.0/0)."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-284: Improper Access Control"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: config
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern: |
+      cidr_blocks = ["0.0.0.0/0"]
+
+  - id: generic-cors-wildcard-origin
+    languages: [javascript, typescript]
+    message: "CORS configuration allows all origins with credentials enabled."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-942: Permissive Cross-domain Policy with Untrusted Domains"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: config
+      likelihood: HIGH
+      impact: MEDIUM
+      confidence: HIGH
+    pattern-either:
+      - pattern: "origin: '*'"
+      - pattern: "res.header('Access-Control-Allow-Origin', '*')"
+      - pattern: 'res.setHeader("Access-Control-Allow-Origin", "*")'

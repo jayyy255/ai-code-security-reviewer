@@ -1,0 +1,47 @@
+rules:
+  - id: api-python-tls-disabled-verification
+    languages: [python]
+    message: "SSL/TLS certificate validation is disabled in Python HTTP client (verify=False)."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      category: api-security
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: requests.get(..., verify=False, ...)
+      - pattern: requests.post(..., verify=False, ...)
+      - pattern: httpx.get(..., verify=False, ...)
+      - pattern: httpx.post(..., verify=False, ...)
+
+  - id: api-node-tls-disabled-verification
+    languages: [javascript, typescript]
+    message: "SSL/TLS certificate validation is disabled in Node.js (rejectUnauthorized: false)."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      category: api-security
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: "rejectUnauthorized: false"
+      - pattern: NODE_TLS_REJECT_UNAUTHORIZED = "0"
+
+  - id: api-exposed-stack-trace
+    languages: [javascript, typescript]
+    message: "Direct exposure of raw stack trace or internal exception message to client responses."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-209: Generation of Error Message Containing Sensitive Information"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: api-security
+      likelihood: HIGH
+      impact: LOW
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: res.status(500).send(err.stack)
+      - pattern: "res.json({ stack: err.stack })"

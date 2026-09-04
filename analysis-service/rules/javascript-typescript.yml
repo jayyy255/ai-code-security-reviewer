@@ -1,0 +1,163 @@
+rules:
+  - id: js-eval-injection
+    languages: [javascript, typescript]
+    message: "Detected use of eval() or Function() with dynamic content which allows arbitrary code execution."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: Function(...)
+      - pattern: window.eval(...)
+      - pattern: global.eval(...)
+      - pattern: setTimeout($X, ...)
+      - pattern: setInterval($X, ...)
+
+  - id: js-child-process-command-injection
+    languages: [javascript, typescript]
+    message: "Unsanitized input passed directly to child_process execution function."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: require('child_process').exec(...)
+      - pattern: require('child_process').execSync(...)
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execSync(...)
+      - pattern: exec($CMD, ...)
+      - pattern: execSync($CMD, ...)
+
+  - id: js-vm-code-execution
+    languages: [javascript, typescript]
+    message: "Use of Node.js vm module creates a sandboxing escape risk if executed with untrusted code."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-94: Improper Control of Generation of Code ('Code Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: vm.runInContext(...)
+      - pattern: vm.runInThisContext(...)
+      - pattern: vm.runInNewContext(...)
+      - pattern: vm.Script(...)
+
+  - id: js-dom-xss-innerhtml
+    languages: [javascript, typescript]
+    message: "Potential DOM Cross-Site Scripting via direct innerHTML or outerHTML assignment."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: $EL.innerHTML = ...
+      - pattern: $EL.outerHTML = ...
+      - pattern: document.write(...)
+      - pattern: document.writeln(...)
+
+  - id: js-prototype-pollution
+    languages: [javascript, typescript]
+    message: "Detected potential prototype pollution via __proto__ or prototype assignment."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-1321: Improperly Controlled Modification of Object Prototype Attributes ('Prototype Pollution')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: MEDIUM
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $OBJ.__proto__ = ...
+      - pattern: $OBJ["__proto__"] = ...
+      - pattern: Object.prototype[$X] = ...
+
+  - id: js-insecure-jwt-decode
+    languages: [javascript, typescript]
+    message: "JWT decoded without cryptographic signature verification."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-347: Improper Verification of Cryptographic Signature"]
+      owasp: ["A02:2021 - Cryptographic Failures", "A07:2021 - Identification and Authentication Failures"]
+      category: auth
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: jwt.decode(...)
+      - pattern: require('jsonwebtoken').decode(...)
+
+  - id: js-nosql-injection
+    languages: [javascript, typescript]
+    message: "Potential NoSQL injection via unvalidated query selectors."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-943: Improper Neutralization of Special Elements in Data Query Logic"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: MEDIUM
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: "$MODEL.find({ $WHERE: ... })"
+      - pattern: "$MODEL.findOne({ $WHERE: ... })"
+      - pattern: "$COLLECTION.find({ $query: ... })"
+
+  - id: js-weak-random-token
+    languages: [javascript, typescript]
+    message: "Math.random() is cryptographically insecure for generating security tokens, salts, or passwords."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      category: crypto
+      likelihood: HIGH
+      impact: MEDIUM
+      confidence: HIGH
+    pattern: Math.random()
+
+  - id: js-insecure-cookie-missing-flags
+    languages: [javascript, typescript]
+    message: "Cookie set with httpOnly: false or secure: false exposes sessions to XSS and network interception."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1004: Sensitive Cookie Without 'HttpOnly' Flag"]
+      owasp: ["A05:2021 - Security Misconfiguration"]
+      category: config
+      likelihood: HIGH
+      impact: MEDIUM
+      confidence: HIGH
+    pattern-either:
+      - pattern: "httpOnly: false"
+      - pattern: "secure: false"
+
+  - id: js-open-redirect
+    languages: [javascript, typescript]
+    message: "Unvalidated URL passed directly to res.redirect() allows Open Redirection attacks."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601: URL Redirection to Untrusted Site ('Open Redirect')"]
+      owasp: ["A01:2021 - Broken Access Control"]
+      category: injection
+      likelihood: MEDIUM
+      impact: MEDIUM
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: res.redirect(req.query.$PARAM)
+      - pattern: res.redirect(req.body.$PARAM)
+      - pattern: window.location.href = $INPUT

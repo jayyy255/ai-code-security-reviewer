@@ -1,0 +1,79 @@
+rules:
+  - id: generic-os-command-injection
+    languages: [javascript, typescript, python, ruby, php, java, go]
+    message: "Potential OS command injection vulnerability with dynamic parameter concatenation."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: os.system($X + $Y)
+      - pattern: exec($X + $Y)
+      - pattern: execSync($X + $Y)
+      - pattern: Runtime.getRuntime().exec($X + $Y)
+
+  - id: generic-path-traversal-read
+    languages: [javascript, typescript, python, go, java]
+    message: "Path traversal vulnerability: file opened or read using unsanitized path."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"]
+      owasp: ["A01:2021 - Broken Access Control"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: fs.readFileSync($BASE + $FILE, ...)
+      - pattern: fs.readFile($BASE + $FILE, ...)
+      - pattern: open($BASE + $FILE, ...)
+      - pattern: os.ReadFile($BASE + $FILE)
+
+  - id: python-ldap-injection
+    languages: [python]
+    message: "LDAP query constructed with string concatenation without proper escaping."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-90: Improper Neutralization of Special Elements used in an LDAP Query ('LDAP Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: $CONN.search(..., search_filter=f"...", ...)
+      - pattern: $CONN.search(..., search_filter="..." + $USER, ...)
+
+  - id: python-xpath-injection
+    languages: [python]
+    message: "XPath query constructed dynamically with user input."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-643: Improper Neutralization of Data within XPath Expressions ('XPath Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: $TREE.xpath(f"...", ...)
+      - pattern: $TREE.xpath("..." + $VAR, ...)
+
+  - id: generic-crlf-header-injection
+    languages: [python, javascript, typescript, java, go]
+    message: "Potential HTTP Response Splitting / CRLF injection via unvalidated header values."
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-113: Improper Neutralization of CRLF Sequences in HTTP Headers ('HTTP Request/Response Splitting')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: MEDIUM
+      impact: MEDIUM
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: res.setHeader($NAME, req.query.$VAL)
+      - pattern: response.set_header($NAME, request.args.get($VAL))
