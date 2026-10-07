@@ -1,7 +1,11 @@
 import os
 import shutil
 import tempfile
-import git
+try:
+    import git
+except ImportError:
+    git = None
+from typing import Any
 from pathlib import Path
 from pydantic import BaseModel, Field
 
@@ -32,11 +36,14 @@ class GitDiffSummary(BaseModel):
     large_change_ratio: bool = False
     force_full_reason: str | None = None
 
-def clone_and_resolve_git(repo_url: str, target_commit: str | None = None, branch: str | None = None, dest_dir: str = "") -> tuple[git.Repo, str, str | None]:
+def clone_and_resolve_git(repo_url: str, target_commit: str | None = None, branch: str | None = None, dest_dir: str = "") -> tuple[Any, str, str | None]:
     """
     Clones the target repository and checks out the specific commit or branch.
     Returns (repo_obj, commit_sha, parent_sha).
     """
+    if git is None:
+        raise RuntimeError("GitPython is required for Git repository operations. Please install gitpython.")
+
     clone_kwargs = {}
     if branch and not target_commit:
         clone_kwargs["branch"] = branch
@@ -55,7 +62,7 @@ def clone_and_resolve_git(repo_url: str, target_commit: str | None = None, branc
 
     return repo, commit_sha, parent_sha
 
-def analyze_git_diff(repo: git.Repo, commit_sha: str, parent_sha: str | None) -> GitDiffSummary:
+def analyze_git_diff(repo: Any, commit_sha: str, parent_sha: str | None) -> GitDiffSummary:
     """
     Analyzes the commit diff against its parent commit to classify changed files
     and evaluate full scan triggers.

@@ -2,7 +2,19 @@ import json
 import subprocess
 import tempfile
 import os
-import yaml
+try:
+    import yaml
+except ImportError:
+    try:
+        from ruamel.yaml import YAML
+        _ruamel_parser = YAML(typ='safe')
+        class _YamlFallback:
+            @staticmethod
+            def safe_load(stream):
+                return _ruamel_parser.load(stream)
+        yaml = _YamlFallback
+    except Exception:
+        yaml = None
 from pathlib import Path
 from app.services.scanner_interface import BaseScanner, ScannerStatusModel
 
@@ -72,7 +84,14 @@ class SemgrepScanner(BaseScanner):
     def get_status(self) -> ScannerStatusModel:
         available = self._version is not None
         rule_files = list(self.rules_path.glob("*.yml")) if self.rules_path.exists() else []
-        rule_count = sum(len((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("rules", [])) for path in rule_files)
+        rule_count = 0
+        if yaml:
+            try:
+                rule_count = sum(len((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("rules", [])) for path in rule_files)
+            except Exception:
+                rule_count = len(rule_files)
+        else:
+            rule_count = len(rule_files)
         return ScannerStatusModel(
             scanner_name="Semgrep",
             available=available,
