@@ -16,7 +16,8 @@ const app = express();
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-security-reviewer';
-const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
+const rawFastApi = process.env.FASTAPI_URL || 'http://localhost:8000';
+const FASTAPI_URL = (rawFastApi.startsWith('http://') || rawFastApi.startsWith('https://')) ? rawFastApi : `https://${rawFastApi}`;
 const FRONTEND_URL = process.env.FRONTEND_URL || true;
 axios.defaults.timeout = 180000;
 
@@ -218,6 +219,20 @@ app.post('/auth/logout', (req, res) => {
   } else {
     res.json({ success: true, message: 'Logged out successfully' });
   }
+});
+
+// Health check endpoint for Render / monitoring
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'express-api', time: new Date().toISOString() });
+});
+
+app.get('/', (req, res) => {
+  res.json({
+    service: 'express-api',
+    status: 'running',
+    version: '2.0.0',
+    endpoints: ['/health', '/auth/me', '/auth/login', '/auth/signup', '/api/v1/files/scan']
+  });
 });
 
 // -------------------------------------------------------------

@@ -24,36 +24,29 @@ services:
     startCommand: node index.js
     plan: free
     region: oregon
-    healthCheckPath: /auth/me
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: TRUST_PROXY
         value: "1"
       - key: FASTAPI_URL
-        fromService:
-          type: web
-          name: ai-security-analysis-engine
-          property: host
+        value: https://ai-security-analysis-engine.onrender.com
       - key: MONGODB_URI
         sync: false # Set your MongoDB Atlas connection string
       - key: SESSION_SECRET
         generateValue: true
       - key: FRONTEND_URL
-        fromService:
-          type: web
-          name: ai-security-frontend
-          property: host
+        value: true
 
   # 3. React Frontend Static Site
-  - type: web
+  - type: static
     name: ai-security-frontend
-    env: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     routes:
-      # Proxy all /api requests to Express Gateway (stripping /api prefix)
+      # Proxy all /api requests to Express Gateway
       - type: rewrite
         source: /api/*
         destination: https://ai-security-express-api.onrender.com/*
