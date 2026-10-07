@@ -40,8 +40,9 @@ services:
         value: true
 
   # 3. React Frontend Static Site
-  - type: static
+  - type: web
     name: ai-security-frontend
+    env: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
