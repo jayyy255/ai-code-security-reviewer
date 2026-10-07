@@ -1,8 +1,9 @@
-import time
 import asyncio
 import os
+import base64
+import binascii
 from uuid import uuid4
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from pathlib import Path
 
 from app.schemas.analyze import (
@@ -29,7 +30,10 @@ from app.services.file_ingestion_service import (
     classify_file,
     sanitize_filename,
     extract_text_from_document,
-    is_binary_content
+    is_binary_content,
+    safe_extract_archive,
+    MAX_FILE_SIZE_BYTES,
+    MAX_UNCOMPRESSED_SIZE
 )
 from app.services.git_scanner_service import (
     clone_and_resolve_git,
@@ -86,7 +90,7 @@ async def scan_single_file(request: AnalyzeRequest):
     raw_summary = generate_summary(deduped)
 
     # 3. AI Explanation & Remediation
-    enriched_findings = await generate_explanations(deduped, request.code)
+    enriched_findings = await generate_explanations(deduped, request.code, request.language)
 
     summary = AnalyzeSummary(
         security_score=raw_summary["security_score"],
@@ -140,54 +144,111 @@ async def scan_batch_files(request: BatchScanRequest):
         files_skipped = []
         all_findings = []
 
-        # 1. Ingest & write files into safe temp workspace
-        for file_item in request.files:
+        raw_dir = Path(temp_dir) / "raw"
+        static_dir = Path(temp_dir) / "static"
+        raw_dir.mkdir()
+        static_dir.mkdir()
+        total_upload = 0
+        total_text = 0
+        total_extracted = 0
+        snippets = {}
+        # Isolate each upload so identically named files cannot overwrite each other.
+        seen_names = set()
+        for index, file_item in enumerate(request.files):
             raw_name = file_item.get("filename", "unnamed.txt")
-            safe_name = sanitize_filename(raw_name)
             content = file_item.get("content", "")
+            if not isinstance(raw_name, str) or not isinstance(content, str):
+                raise HTTPException(status_code=422, detail="Each file needs a string filename and content.")
+            try:
+                if file_item.get("encoding", "utf-8") == "base64":
+                    raw_bytes = base64.b64decode(content, validate=True)
+                elif file_item.get("encoding", "utf-8") == "utf-8":
+                    raw_bytes = content.encode("utf-8")
+                else:
+                    raise ValueError("Unsupported file encoding.")
+            except (ValueError, binascii.Error) as exc:
+                raise HTTPException(status_code=422, detail="Invalid file content or encoding.") from exc
+            total_upload += len(raw_bytes)
+            if len(raw_bytes) > MAX_FILE_SIZE_BYTES or total_upload > MAX_FILE_SIZE_BYTES:
+                raise HTTPException(status_code=413, detail="Combined upload exceeds the 50 MB limit.")
+            safe_name = sanitize_filename(raw_name)
+            display_root = safe_name if safe_name.casefold() not in seen_names else f"{index + 1}_{safe_name}"
+            seen_names.add(display_root.casefold())
+            upload_dir = raw_dir / str(index)
+            upload_dir.mkdir()
+            raw_path = upload_dir / safe_name
+            raw_path.write_bytes(raw_bytes)
+            classification = classify_file(safe_name, raw_bytes[:4096])
+            candidates = [(display_root, raw_path)]
+            if classification.category == "Archive":
+                unpacked = upload_dir / "unpacked"
+                unpacked.mkdir()
+                try:
+                    extracted = await asyncio.to_thread(safe_extract_archive, str(raw_path), str(unpacked), MAX_UNCOMPRESSED_SIZE - total_extracted)
+                    total_extracted += sum((unpacked / name).stat().st_size for name in extracted)
+                except (ValueError, OSError, EOFError) as exc:
+                    raise HTTPException(status_code=400, detail=f"Archive rejected: {exc}") from exc
+                candidates = [(f"{display_root}/{name}", unpacked / name) for name in extracted]
+                if not candidates:
+                    files_skipped.append(f"{display_root} (empty archive)")
 
-            # Check if binary
-            classification = classify_file(safe_name, content.encode('utf-8', errors='ignore') if isinstance(content, str) else content)
-
-            if not classification.is_safe_for_static_analysis:
-                files_skipped.append(f"{safe_name} ({classification.category} - {classification.warning or 'skipped'})")
-                continue
-
-            dest_path = os.path.join(temp_dir, safe_name)
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-            with open(dest_path, "w", encoding="utf-8", errors="ignore") as f:
-                f.write(content if isinstance(content, str) else "")
-
-            files_analyzed.append(safe_name)
-
-            # Prompt injection check
-            all_findings.extend(scan_for_prompt_injection(content, file_path=safe_name))
+            for display_name, path in candidates:
+                with path.open("rb") as stream:
+                    sample = stream.read(4096)
+                kind = classify_file(path.name, sample)
+                if not kind.is_safe_for_static_analysis or kind.category == "Archive":
+                    files_skipped.append(f"{display_name} ({kind.category} - {kind.warning or 'static analysis skipped'})")
+                    continue
+                if path.suffix.lower() in (".pdf", ".docx"):
+                    try:
+                        text = await asyncio.to_thread(extract_text_from_document, str(path))
+                    except ValueError as exc:
+                        files_skipped.append(f"{display_name} ({exc})")
+                        continue
+                    static_name = display_name + ".txt"
+                else:
+                    if is_binary_content(sample) or path.suffix.lower() == ".doc":
+                        files_skipped.append(f"{display_name} (binary or unsupported document)")
+                        continue
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    static_name = display_name
+                total_text += len(text.encode("utf-8"))
+                if total_text > MAX_UNCOMPRESSED_SIZE:
+                    raise HTTPException(status_code=413, detail="Extracted text exceeds the 100 MB limit.")
+                target = static_dir / static_name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+                files_analyzed.append(display_name)
+                snippets[static_name] = text
+                all_findings.extend(scan_for_prompt_injection(text, file_path=display_name))
 
         # 2. Run ClamAV malware scan on workspace
-        malware_result = scan_path_for_malware(temp_dir)
+        malware_result = await asyncio.to_thread(scan_path_for_malware, str(raw_dir))
         malware_info = MalwareStatusInfo(
             status=malware_result.status,
             engine=malware_result.engine,
             engine_available=malware_result.engine_available,
             details=malware_result.details,
             threat_name=malware_result.threat_name,
-            files_scanned=len(files_analyzed),
+            files_scanned=malware_result.files_scanned,
             infected_files=malware_result.infected_files
         )
 
         # 3. Static & Secret Scanners
         semgrep_res, gitleaks_res = await asyncio.gather(
-            asyncio.to_thread(run_path_scan, temp_dir),
-            asyncio.to_thread(run_path_secret_scan, temp_dir)
+            asyncio.to_thread(run_path_scan, str(static_dir)),
+            asyncio.to_thread(run_path_secret_scan, str(static_dir))
         )
 
+        for finding in semgrep_res + gitleaks_res:
+            path = finding.get("file_path", "").replace("\\", "/")
+            finding["file_path"] = path[:-4] if path.endswith((".pdf.txt", ".docx.txt")) else path
         all_findings.extend(semgrep_res + gitleaks_res)
         deduped = deduplicate_findings(all_findings)
         raw_summary = generate_summary(deduped)
 
         # 4. AI Explanation
-        enriched_findings = await generate_explanations(deduped, {f: "" for f in files_analyzed[:5]})
+        enriched_findings = await generate_explanations(deduped, snippets)
 
         summary = AnalyzeSummary(
             security_score=raw_summary["security_score"],

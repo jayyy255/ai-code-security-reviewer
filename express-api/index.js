@@ -8,27 +8,28 @@ const morgan = require('morgan');
 const helmet = require('helmet');
 const axios = require('axios');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
 const User = require('./models/User');
 const ScanHistory = require('./models/ScanHistory');
 
 const app = express();
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-security-reviewer';
 const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
 const FRONTEND_URL = process.env.FRONTEND_URL || true;
+axios.defaults.timeout = 180000;
 
 // Connect to MongoDB
-mongoose.connect(MONGODB_URI)
+mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
   .then(() => console.log('Connected to MongoDB successfully'))
-  .catch(err => console.warn('MongoDB connection notice (will run in ephemeral/memory mode if unconfigured):', err.message));
+  .catch(() => console.warn('MongoDB unavailable: account and vault endpoints will return 503. Guest scans remain available.'));
+mongoose.set('bufferCommands', false);
 
 // Multer memory storage for safe file intake (max 50MB)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024, files: 50 }
 });
 
 // Middleware
@@ -38,28 +39,35 @@ app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Session Configuration
-try {
-  app.use(session({
-    name: 'reviewer.sid',
-    secret: process.env.SESSION_SECRET || 'reviewer-session-secret-key-1337',
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: MONGODB_URI,
-      collectionName: 'sessions',
-      ttl: 14 * 24 * 60 * 60
-    }),
-    cookie: {
-      maxAge: 14 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax'
-    }
-  }));
-} catch (e) {
-  console.warn('Session store fallback initialization notice.');
-}
+// Sessions share the established MongoDB connection. Failed storage never silently
+// creates an unauthenticated application or an unhandled rejected promise.
+const sessionClient = mongoose.connection.asPromise().then(connection => connection.getClient());
+sessionClient.catch(() => {});
+const sessionStore = MongoStore.create({
+  clientPromise: sessionClient,
+  collectionName: 'sessions',
+  ttl: 14 * 24 * 60 * 60,
+  autoRemove: 'native',
+});
+sessionStore.collectionP.catch(() => {});
+sessionStore.on('error', () => console.warn('Session storage unavailable.'));
+const sessionMiddleware = session({
+  name: 'reviewer.sid',
+  secret: process.env.SESSION_SECRET || 'reviewer-session-secret-key-1337',
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  cookie: {
+    maxAge: 14 * 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.COOKIE_SAMESITE || 'lax',
+  },
+});
+app.use((req, res, next) => {
+  if (mongoose.connection.readyState !== 1) return next();
+  sessionMiddleware(req, res, next);
+});
 
 // Auth Middleware
 const requireAuth = (req, res, next) => {
@@ -69,8 +77,26 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
+app.get('/health', async (req, res) => {
+  try {
+    const analysis = await axios.get(`${FASTAPI_URL}/health/`, { timeout: 5000 });
+    res.json({ status: 'ready', database: mongoose.connection.readyState === 1, analysis: analysis.data });
+  } catch {
+    res.status(503).json({ status: 'unavailable', error: 'Analysis engine is not reachable.' });
+  }
+});
+
+app.use((req, res, next) => {
+  const needsDatabase = req.path.startsWith('/history') || req.path.startsWith('/api/v1/scans/') ||
+    req.path === '/auth/signup' || req.path === '/auth/login' || (req.path === '/auth/me' && req.session?.userId);
+  if (needsDatabase && mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Account and vault storage is unavailable. Start MongoDB and restart the gateway.' });
+  }
+  next();
+});
+
 // Helper: Save to History if logged in and not ephemeral
-async function persistScanResult(userId, scanResult, originalCode = null, ephemeral = false) {
+async function persistScanResult(userId, scanResult, ephemeral = false) {
   if (!userId || ephemeral || scanResult.privacy_metadata?.ephemeral_scan) {
     return;
   }
@@ -87,8 +113,7 @@ async function persistScanResult(userId, scanResult, originalCode = null, epheme
       low: scanResult.summary?.low ?? 0,
       summary: scanResult.summary,
       findings: scanResult.findings,
-      // Privacy-conscious: only store code snippet if explicitly small / paste mode
-      code: scanResult.scan_type === 'paste' ? originalCode : undefined,
+      // Keep findings/snippets, never the complete submitted source.
       files_analyzed: scanResult.files_analyzed || [],
       files_skipped: scanResult.files_skipped || [],
       scanner_status: scanResult.scanner_status || [],
@@ -105,6 +130,7 @@ async function persistScanResult(userId, scanResult, originalCode = null, epheme
     await historyItem.save();
   } catch (err) {
     console.error('Error persisting scan to MongoDB:', err.message);
+    scanResult.persistence_warning = 'The report could not be saved to your vault. Export it to keep a copy.';
   }
 }
 
@@ -128,12 +154,15 @@ app.get('/auth/me', async (req, res) => {
 
 app.post('/auth/signup', async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { password } = req.body;
+    const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'All fields are required' });
     }
     if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
-    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (typeof password !== 'string' || password.length < 6 || Buffer.byteLength(password) > 72) return res.status(400).json({ error: 'Password must be at least 6 characters and no more than 72 bytes' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'A valid email address is required' });
 
     const existingUser = await User.findOne({ $or: [{ username }, { email: email.toLowerCase() }] });
     if (existingUser) {
@@ -142,7 +171,9 @@ app.post('/auth/signup', async (req, res) => {
 
     const user = new User({ username, email, password });
     await user.save();
+    await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.userId = user._id;
+    await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
 
     const userObj = user.toObject();
     delete userObj.password;
@@ -155,8 +186,9 @@ app.post('/auth/signup', async (req, res) => {
 
 app.post('/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    const { password } = req.body;
+    const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    if (!username || typeof password !== 'string' || !password) return res.status(400).json({ error: 'Username and password required' });
 
     const user = await User.findOne({ $or: [{ username }, { email: username.toLowerCase() }] });
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
@@ -164,7 +196,9 @@ app.post('/auth/login', async (req, res) => {
     const isMatch = await user.comparePassword(password);
     if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
 
+    await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.userId = user._id;
+    await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     const userObj = user.toObject();
     delete userObj.password;
     res.json({ user: userObj });
@@ -206,7 +240,7 @@ const handleSingleScan = async (req, res) => {
     });
 
     const scanResult = response.data;
-    await persistScanResult(req.session?.userId, scanResult, code, Boolean(ephemeral));
+    await persistScanResult(req.session?.userId, scanResult, Boolean(ephemeral));
     res.json(scanResult);
   } catch (err) {
     console.error('Single scan proxy error:', err.message);
@@ -225,9 +259,13 @@ app.post('/api/v1/files/scan-batch', upload.array('files', 50), async (req, res)
 
     // If sent as multipart files
     if (req.files && req.files.length > 0) {
+      if (req.files.reduce((size, file) => size + file.size, 0) > 50 * 1024 * 1024) {
+        return res.status(413).json({ error: 'Combined upload exceeds the 50 MB limit.' });
+      }
       filesPayload = req.files.map(f => ({
         filename: f.originalname,
-        content: f.buffer.toString('utf-8')
+        content: f.buffer.toString('base64'),
+        encoding: 'base64'
       }));
     } else if (req.body.files) {
       // If sent as JSON array
@@ -246,7 +284,7 @@ app.post('/api/v1/files/scan-batch', upload.array('files', 50), async (req, res)
     });
 
     const scanResult = response.data;
-    await persistScanResult(req.session?.userId, scanResult, null, ephemeral);
+    await persistScanResult(req.session?.userId, scanResult, ephemeral);
     res.json(scanResult);
   } catch (err) {
     console.error('Batch scan proxy error:', err.message);
@@ -274,7 +312,7 @@ app.post('/api/v1/commits/analyze', async (req, res) => {
     });
 
     const scanResult = response.data;
-    await persistScanResult(req.session?.userId, scanResult, null, Boolean(ephemeral));
+    await persistScanResult(req.session?.userId, scanResult, Boolean(ephemeral));
     res.json(scanResult);
   } catch (err) {
     console.error('Commit analysis proxy error:', err.message);
@@ -284,9 +322,9 @@ app.post('/api/v1/commits/analyze', async (req, res) => {
 });
 
 // GET /api/v1/scans/:scanId
-app.get('/api/v1/scans/:scanId', async (req, res) => {
+app.get('/api/v1/scans/:scanId', requireAuth, async (req, res) => {
   try {
-    const record = await ScanHistory.findOne({ analysis_id: req.params.scanId });
+    const record = await ScanHistory.findOne({ analysis_id: req.params.scanId, user: req.session.userId });
     if (!record) {
       return res.status(404).json({ error: 'Scan record not found.' });
     }
@@ -325,11 +363,16 @@ app.get('/history', requireAuth, async (req, res) => {
 
 app.post('/history', requireAuth, async (req, res) => {
   try {
-    const existing = await ScanHistory.findOne({ analysis_id: req.body.analysis_id });
+    if (req.body.privacy_metadata?.ephemeral_scan || req.body.is_demo) {
+      return res.status(400).json({ error: 'Ephemeral and demo reports cannot be persisted.' });
+    }
+    const existing = await ScanHistory.findOne({ analysis_id: req.body.analysis_id, user: req.session.userId });
     if (existing) return res.json(existing);
 
     const historyItem = new ScanHistory({
       ...req.body,
+      code: undefined,
+      score: req.body.summary?.security_score ?? req.body.score,
       user: req.session.userId
     });
     await historyItem.save();
@@ -366,6 +409,15 @@ app.delete('/history', requireAuth, async (req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(413).json({ error: `Upload rejected: ${err.message}` });
+  }
+  if (err instanceof SyntaxError && err.status === 400) {
+    return res.status(400).json({ error: 'Invalid JSON payload.' });
+  }
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request exceeds the upload size limit.' });
+  }
   console.error('Unhandled application error:', err);
   res.status(500).json({ error: 'An unexpected error occurred on the server' });
 });

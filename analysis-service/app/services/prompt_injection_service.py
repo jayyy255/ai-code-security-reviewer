@@ -33,6 +33,7 @@ def scan_for_prompt_injection(content: str, file_path: str = "snippet") -> list[
                     "file_path": file_path,
                     "line": idx,
                     "column": 1,
+                    "snippet": line.strip(),
                     "severity": severity,
                     "category": "prompt-injection",
                     "message": f"Potential Prompt Injection / Manipulation Detected: {description}",
@@ -50,6 +51,7 @@ def scan_for_prompt_injection(content: str, file_path: str = "snippet") -> list[
                         "Never allow user content to modify system instructions or security evaluator prompts.",
                         "Inspect input for adversarial evasion techniques."
                     ],
+                    "fixed_code": "# Remove adversarial directives or isolate user inputs in parameter payloads\n# (Avoid passing unvalidated system overrides to downstream LLMs)",
                     "requires_verification": True
                 })
 

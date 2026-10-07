@@ -44,7 +44,7 @@ A privacy-conscious, multi-mode security review platform that combines **Semgrep
 2. **Ephemeral Mode**: Users can toggle Ephemeral Mode to run scans entirely in-memory with zero database persistence.
 3. **Snippet-Only AI Context**: The platform never sends entire repositories to the LLM. Only concise finding snippets and surrounding diff context are provided for remediation.
 4. **Prompt Injection Hardening**: All scanned code is wrapped in strict untrusted data boundaries with a fixed system prompt forbidding execution of in-code directives.
-5. **AI Advisory Transparency**: Every AI-generated remediation is marked with `source: "ai"`, `confidence`, and `requires_verification: true`.
+5. **AI Advisory Transparency**: Every AI-generated remediation is marked with `advisory_source: "ai"`, `confidence`, and `requires_verification: true`.
 
 ---
 
@@ -154,7 +154,7 @@ Retrieve or purge a scan record from the history vault.
 
 ### Prerequisites
 - Python 3.10+
-- Node.js 18+
+- Node.js 22.12+
 - Semgrep (`pip install semgrep`)
 - Git (`git --version`)
 - *(Optional)* ClamAV for live local malware scanning (`clamscan`)
@@ -184,3 +184,42 @@ Open your browser to `http://localhost:5173`.
 ```bash
 pytest analysis-service/tests/ -v
 ```
+
+
+## Verified non-repository workflow and deployment
+
+Paste scans and multipart uploads return real findings; scanner/API failures are
+shown as errors instead of synthetic demo reports. Uploads preserve binary data,
+extract ZIP/TAR source archives safely, and extract PDF/DOCX text for secret and
+prompt-injection checks. Executables/images and nested archives are reported as
+skipped for static analysis while original bytes remain eligible for malware
+scanning. Files are never executed. Unsupported or malformed documents are
+reported explicitly.
+
+Guest reports save findings/snippets in browser storage. Account reports save
+findings/snippets in MongoDB, with owner-scoped retrieval and deletion. Complete
+submitted source is not saved. Ephemeral reports stay in page memory and disappear
+on a full reload; they are not written to localStorage, navigation state, or the
+vault. AI explanations use bounded finding-local snippets and redact secret
+findings; absent/unavailable Gemini falls back to labeled local remediation.
+
+For Render/Railway roots, Docker settings, environment variables, cookies, and
+ClamAV signature setup, see [docs/deployment.md](docs/deployment.md).
+Example variables are in each service's `.env.example`.
+
+Regression checks (start the local stack and use a disposable MongoDB database
+before running gateway integration tests):
+
+```powershell
+python -m pytest analysis-service/tests -q
+cd frontend
+npm test
+npm run lint
+npm run build
+cd ../express-api
+npm test
+```
+
+The gateway test creates isolated accounts and deletes only reports it creates.
+It defaults to the frontend proxy at `http://127.0.0.1:5173/api`; set
+`TEST_BASE_URL` only for a dedicated test environment.

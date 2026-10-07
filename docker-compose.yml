@@ -1,16 +1,88 @@
-services:
+version: '3.8'
 
+services:
+  # 1. Vite React Frontend (Served via Nginx Reverse Proxy)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: code-scanner-frontend
+    ports:
+      - "5173:80"
+      - "80:80"
+    depends_on:
+      - express-api
+    networks:
+      - reviewer-network
+    restart: unless-stopped
+
+  # 2. Express API Gateway (Auth, Session Management, Proxy)
+  express-api:
+    build:
+      context: ./express-api
+      dockerfile: Dockerfile
+    container_name: code-scanner-express
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongo:27017/ai-security-reviewer
+      - FASTAPI_URL=http://analysis-service:8000
+      - FRONTEND_URL=http://localhost:5173
+      - SESSION_SECRET=reviewer-secret-session-key-1337
+    depends_on:
+      - mongo
+      - analysis-service
+    networks:
+      - reviewer-network
+    restart: unless-stopped
+
+  # 3. FastAPI Analysis Service (Semgrep, Gitleaks, ClamAV, AI Explainer)
+  analysis-service:
+    build:
+      context: ./analysis-service
+      dockerfile: Dockerfile
+    container_name: code-scanner-analysis
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      # Pass your Gemini API Key here or through a .env file
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      - redis
+    networks:
+      - reviewer-network
+    restart: unless-stopped
+
+  # 4. Redis (Caching & Task Management)
   redis:
     image: redis:7-alpine
     container_name: code-scanner-redis
-
     ports:
       - "6379:6379"
-
     restart: unless-stopped
-
     volumes:
       - redis-data:/data
+    networks:
+      - reviewer-network
+
+  # 5. MongoDB (Vault, History, User Accounts)
+  mongo:
+    image: mongo:6
+    container_name: code-scanner-mongo
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - reviewer-network
 
 volumes:
   redis-data:
+  mongo-data:
+
+networks:
+  reviewer-network:
+    driver: bridge

@@ -1,226 +1,125 @@
-// API Service for AI Code Security Reviewer (Multi-Mode & Privacy-Conscious)
-
-const BACKEND_URL = '/api';
-
+// Real scan results only; transport failures remain visible to the user.
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '/api';
 let isLoggedIn = false;
+const transientReports = new Map();
+export function setLoggedInStatus(status) { isLoggedIn = status; if (!status) transientReports.clear(); }
 
-export function setLoggedInStatus(status) {
-  isLoggedIn = status;
-}
-
-function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
-
-// --- AUTH SERVICES ---
-export async function getCurrentUser() {
+async function request(path, options = {}) {
+  let response;
   try {
-    const response = await fetch(`${BACKEND_URL}/auth/me`, {
-      credentials: 'include'
-    });
-    if (response.ok) {
-      const data = await response.json();
-      if (data.user) {
-        isLoggedIn = true;
-        return data.user;
-      }
-    }
-    isLoggedIn = false;
-    return null;
-  } catch (error) {
-    console.error("Error getting session user:", error);
-    isLoggedIn = false;
-    return null;
+    response = await fetch(`${BACKEND_URL}${path}`, { credentials: 'include', ...options });
+  } catch {
+    throw new Error('Cannot reach the security service. Check that the API and analysis engine are running.');
   }
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = data?.detail;
+    const message = Array.isArray(detail) ? detail.map(item => item.msg).join('; ') : detail;
+    throw new Error(data?.error || message || `Request failed (${response.status}).`);
+  }
+  if (data === null) throw new Error('The service returned an invalid response.');
+  return data;
+}
+const jsonOptions = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const HISTORY_KEY = 'reviewer_scan_history';
+function readLocalHistory() {
+  try {
+    const data = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+function historyRecord(result) {
+  const record = { ...result };
+  delete record.code;
+  return {
+    ...record,
+    timestamp: result.timestamp || new Date().toISOString(),
+    score: result.summary?.security_score ?? result.score,
+    critical: result.summary?.critical ?? result.critical ?? 0,
+    high: result.summary?.high ?? result.high ?? 0,
+    medium: result.summary?.medium ?? result.medium ?? 0,
+    low: result.summary?.low ?? result.low ?? 0,
+  };
 }
 
+export async function getCurrentUser() {
+  const data = await request('/auth/me');
+  isLoggedIn = Boolean(data.user);
+  return data.user;
+}
 export async function login(username, password) {
-  const response = await fetch(`${BACKEND_URL}/auth/login`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
-  });
-  if (!response.ok) {
-    const errData = await response.json();
-    throw new Error(errData.error || 'Login failed');
-  }
-  const data = await response.json();
+  const data = await request('/auth/login', jsonOptions({ username, password }));
   isLoggedIn = true;
+  transientReports.clear();
   return data.user;
 }
-
 export async function signup(username, email, password) {
-  const response = await fetch(`${BACKEND_URL}/auth/signup`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, email, password })
-  });
-  if (!response.ok) {
-    const errData = await response.json();
-    throw new Error(errData.error || 'Signup failed');
-  }
-  const data = await response.json();
+  const data = await request('/auth/signup', jsonOptions({ username, email, password }));
   isLoggedIn = true;
+  transientReports.clear();
   return data.user;
 }
-
 export async function logout() {
-  const response = await fetch(`${BACKEND_URL}/auth/logout`, {
-    method: 'POST',
-    credentials: 'include'
-  });
-  if (!response.ok) throw new Error('Logout failed');
-  isLoggedIn = false;
+  await request('/auth/logout', { method: 'POST' });
+  setLoggedInStatus(false);
 }
-
 export async function syncLocalHistoryToBackend() {
   if (!isLoggedIn) return;
-  const localHistoryStr = localStorage.getItem('reviewer_scan_history');
-  if (!localHistoryStr) return;
-
-  try {
-    const localHistory = JSON.parse(localHistoryStr);
-    if (localHistory && localHistory.length > 0) {
-      for (const item of localHistory) {
-        await fetch(`${BACKEND_URL}/history`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(item)
-        });
-      }
-      localStorage.removeItem('reviewer_scan_history');
-    }
-  } catch (error) {
-    console.error('Failed to sync guest history to backend:', error);
+  // Remove only records acknowledged by the server; failed syncs are retriable.
+  for (const item of readLocalHistory()) {
+    if (item.privacy_metadata?.ephemeral_scan || item.is_demo) continue;
+    await request('/history', jsonOptions(historyRecord(item)));
+    const remaining = readLocalHistory().filter(record => record.analysis_id !== item.analysis_id);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(remaining));
   }
 }
-
-// --- HISTORY SERVICES ---
 export async function getHistory() {
-  if (isLoggedIn) {
+  const history = isLoggedIn ? await request('/history') : readLocalHistory();
+  return history.map(historyRecord);
+}
+export async function saveToHistory(result) {
+  transientReports.set(result.analysis_id, result);
+  if (transientReports.size > 20) transientReports.delete(transientReports.keys().next().value);
+  if (result.privacy_metadata?.ephemeral_scan) return;
+  if (isLoggedIn) return;
+  const history = readLocalHistory();
+  if (!history.some(item => item.analysis_id === result.analysis_id)) {
     try {
-      const response = await fetch(`${BACKEND_URL}/history`, { credentials: 'include' });
-      if (response.ok) return await response.json();
-    } catch (error) {
-      console.warn("Failed to fetch from DB vault, checking local storage.", error);
-    }
-  }
-  const history = localStorage.getItem('reviewer_scan_history');
-  return history ? JSON.parse(history) : [];
-}
-
-export async function saveToHistory(scanResult) {
-  if (scanResult.privacy_metadata?.ephemeral_scan) return;
-
-  if (!isLoggedIn) {
-    const history = await getHistory();
-    if (!history.some(item => item.analysis_id === scanResult.analysis_id)) {
-      const updated = [scanResult, ...history];
-      localStorage.setItem('reviewer_scan_history', JSON.stringify(updated.slice(0, 50)));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify([historyRecord(result), ...history].slice(0, 50)));
+    } catch {
+      result.persistence_warning = 'This report could not be saved in browser storage. Export it to keep a copy.';
     }
   }
 }
-
-export async function deleteFromHistory(analysisId) {
-  if (isLoggedIn) {
-    try {
-      await fetch(`${BACKEND_URL}/api/v1/scans/${analysisId}`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
-    } catch (e) {
-      console.error("Failed to delete record:", e);
-    }
-  }
-  const history = await getHistory();
-  const filtered = history.filter(item => item.analysis_id !== analysisId);
-  localStorage.setItem('reviewer_scan_history', JSON.stringify(filtered));
+export async function deleteFromHistory(id) {
+  if (isLoggedIn) await request(`/api/v1/scans/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  transientReports.delete(id);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(readLocalHistory().filter(item => item.analysis_id !== id)));
 }
-
 export async function clearHistory() {
-  if (isLoggedIn) {
-    try {
-      await fetch(`${BACKEND_URL}/history`, { method: 'DELETE', credentials: 'include' });
-    } catch (e) {
-      console.error("Failed to clear DB vault:", e);
-    }
-  }
-  localStorage.removeItem('reviewer_scan_history');
+  if (isLoggedIn) await request('/history', { method: 'DELETE' });
+  else localStorage.removeItem(HISTORY_KEY);
+  transientReports.clear();
 }
-
-export async function getAnalysisResult(analysisId) {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/v1/scans/${analysisId}`, { credentials: 'include' });
-    if (response.ok) return await response.json();
-  } catch (e) {
-    // fallback to local history
-  }
-  const history = await getHistory();
-  return history.find(item => item.analysis_id === analysisId) || null;
+export async function getAnalysisResult(id) {
+  if (transientReports.has(id)) return transientReports.get(id);
+  if (isLoggedIn) return request(`/api/v1/scans/${encodeURIComponent(id)}`);
+  return readLocalHistory().find(item => item.analysis_id === id) || null;
 }
-
-// -------------------------------------------------------------
-// 3 SCAN MODES
-// -------------------------------------------------------------
-
-// Mode 1: Paste Code / Single File
 export async function analyzeCode(code, language, fileName = 'snippet', ephemeral = false) {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/v1/files/scan`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, language, file_name: fileName, ephemeral })
-    });
-
-    if (response.ok) {
-      const result = await response.json();
-      result.code = code;
-      await saveToHistory(result);
-      return result;
-    } else {
-      const err = await response.json();
-      throw new Error(err.error || `Server error ${response.status}`);
-    }
-  } catch (error) {
-    console.warn("Backend API unreachable. Falling back to Demo Mode.", error);
-    const mock = generateDemoMockResponse(code, language, 'paste');
-    await saveToHistory(mock);
-    return mock;
-  }
+  const result = await request('/api/v1/files/scan', jsonOptions({ code, language, file_name: fileName, ephemeral }));
+  await saveToHistory(result);
+  return result;
 }
-
-// Mode 2: File / Batch Upload
 export async function scanUploadedFiles(filesArray, ephemeral = false) {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/v1/files/scan-batch`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: filesArray, ephemeral })
-    });
-
-    if (response.ok) {
-      const result = await response.json();
-      await saveToHistory(result);
-      return result;
-    } else {
-      const err = await response.json();
-      throw new Error(err.error || `Batch scan error ${response.status}`);
-    }
-  } catch (error) {
-    console.warn("Backend batch scan unreachable. Using demo response.", error);
-    const mock = generateDemoMockResponse("Uploaded project files", "multi", "upload");
-    await saveToHistory(mock);
-    return mock;
-  }
+  const body = new FormData();
+  filesArray.forEach(file => body.append('files', file, file.name));
+  body.append('ephemeral', String(ephemeral));
+  const result = await request('/api/v1/files/scan-batch', { method: 'POST', body });
+  await saveToHistory(result);
+  return result;
 }
+function generateUUID() { return crypto.randomUUID(); }
 
 // Mode 3: GitHub Repo / Commit Analysis
 export async function analyzeCommit(repoUrl, commitSha = null, branch = null, strategy = 'auto', baselineFindings = [], ephemeral = false) {

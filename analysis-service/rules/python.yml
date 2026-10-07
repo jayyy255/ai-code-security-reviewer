@@ -16,6 +16,46 @@ rules:
       - pattern: $CURSOR.execute("...".format(...), ...)
       - pattern: $CURSOR.execute("..." + $VAR, ...)
       - pattern: $CURSOR.execute($X + $Y, ...)
+      - pattern: $DB.execute(f"...", ...)
+      - pattern: $DB.execute("..." + $VAR, ...)
+      - pattern: $M.objects.raw(f"...", ...)
+      - pattern: $M.objects.raw("..." + $VAR, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = f"..."
+              ...
+              $CURSOR.execute($Q, ...)
+          - pattern: $CURSOR.execute($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = "..." % (...)
+              ...
+              $CURSOR.execute($Q, ...)
+          - pattern: $CURSOR.execute($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = "...".format(...)
+              ...
+              $CURSOR.execute($Q, ...)
+          - pattern: $CURSOR.execute($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = "..." + $VAR
+              ...
+              $CURSOR.execute($Q, ...)
+          - pattern: $CURSOR.execute($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = $X + $Y
+              ...
+              $CURSOR.execute($Q, ...)
+          - pattern: $CURSOR.execute($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = f"..."
+              ...
+              $DB.execute($Q, ...)
+          - pattern: $DB.execute($Q, ...)
 
   - id: python-command-injection
     languages: [python]
@@ -35,6 +75,24 @@ rules:
       - pattern: subprocess.run(..., shell=True)
       - pattern: subprocess.call(..., shell=True)
       - pattern: subprocess.check_output(..., shell=True)
+      - patterns:
+          - pattern-inside: |
+              $CMD = f"..."
+              ...
+              os.system($CMD)
+          - pattern: os.system($CMD)
+      - patterns:
+          - pattern-inside: |
+              $CMD = "..." + $VAR
+              ...
+              os.system($CMD)
+          - pattern: os.system($CMD)
+      - patterns:
+          - pattern-inside: |
+              $CMD = f"..."
+              ...
+              subprocess.run($CMD, ...)
+          - pattern: subprocess.run($CMD, ...)
 
   - id: python-insecure-deserialization-pickle
     languages: [python]

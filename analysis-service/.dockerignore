@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+new-env/
+.env
+.venv/
+env/
+venv/
+.pytest_cache/
+tests/
+output.json
+test.py

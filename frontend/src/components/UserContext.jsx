@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import { createContext, useState, useEffect, useContext } from 'react';
 import * as api from '../services/api';
 
 const UserContext = createContext(null);
@@ -16,7 +16,7 @@ export function UserProvider({ children }) {
         if (user) {
           setCurrentUser(user);
           // Sync local history to backend upon initial load if authenticated
-          await api.syncLocalHistoryToBackend();
+          await api.syncLocalHistoryToBackend().catch(err => console.warn('Guest history sync failed:', err.message));
         }
       } catch (err) {
         console.error('Session check failed:', err);
@@ -33,7 +33,7 @@ export function UserProvider({ children }) {
       const user = await api.login(username, password);
       setCurrentUser(user);
       // Sync local history to backend after successful login
-      await api.syncLocalHistoryToBackend();
+      await api.syncLocalHistoryToBackend().catch(err => console.warn('Guest history sync failed:', err.message));
       return user;
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -47,7 +47,7 @@ export function UserProvider({ children }) {
       const user = await api.signup(username, email, password);
       setCurrentUser(user);
       // Sync local history to backend after successful registration
-      await api.syncLocalHistoryToBackend();
+      await api.syncLocalHistoryToBackend().catch(err => console.warn('Guest history sync failed:', err.message));
       return user;
     } catch (err) {
       setError(err.message || 'Signup failed. Please try again.');
@@ -84,6 +84,8 @@ export function UserProvider({ children }) {
   );
 }
 
+// Context and its hook intentionally share one module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(UserContext);
   if (!context) {

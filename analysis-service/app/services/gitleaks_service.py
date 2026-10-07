@@ -163,6 +163,7 @@ class GitleaksScanner(BaseScanner):
                         "file_path": file_name,
                         "line": idx,
                         "column": 1,
+                        "snippet": line.strip(),
                         "severity": severity,
                         "category": "secrets",
                         "message": description,
@@ -173,12 +174,12 @@ class GitleaksScanner(BaseScanner):
                         "vulnerability_class": ["Hardcoded Secret", "Credential Exposure"],
                         "likelihood": "HIGH",
                         "impact": "HIGH",
-                        "explanation": None,
-                        "risk": None,
+                        "explanation": f"Hardcoded credential detected on line {idx}: {description}. Storing credentials directly in code exposes them to leakage via repositories, build logs, and unauthorized access.",
+                        "risk": "Attackers with read access to source code or git history can obtain credentials and impersonate services or compromise cloud accounts.",
                         "remediation": [
-                            "Revoke the exposed key/token immediately.",
-                            "Store secrets in environment variables or key management services.",
-                            "Ensure secrets are never committed into version control."
+                            "Revoke and rotate the exposed secret immediately.",
+                            "Store secrets in environment variables or key management services (AWS Secrets Manager, Vault, etc.).",
+                            "Ensure secrets and .env files are added to .gitignore."
                         ],
                         "fixed_code": None,
                         "requires_verification": False

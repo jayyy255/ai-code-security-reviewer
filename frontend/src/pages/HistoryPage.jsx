@@ -1,48 +1,57 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   History, 
   Trash2, 
   Eye, 
-  ExternalLink,
   Code,
   ShieldAlert,
   ArrowRight,
-  ShieldCheck
 } from 'lucide-react';
+import { useAuth } from '../components/UserContext';
 import { getHistory, deleteFromHistory, clearHistory } from '../services/api';
 import './HistoryPage.css';
 
 export default function HistoryPage() {
   const navigate = useNavigate();
+  const { loading: sessionLoading, currentUser } = useAuth();
   const [history, setHistory] = useState([]);
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    if (sessionLoading) return;
     async function loadHistory() {
-      const data = await getHistory();
-      setHistory(data);
+      try {
+        const data = await getHistory();
+        setHistory(data);
+      } catch (err) { setError(err.message); }
     }
     loadHistory();
-  }, []);
+  }, [sessionLoading, currentUser]);
 
   const handleDeleteItem = async (id, e) => {
     e.stopPropagation(); // Avoid triggering row navigate click
     if (window.confirm("Are you sure you want to delete this scan record?")) {
-      await deleteFromHistory(id);
-      const data = await getHistory();
-      setHistory(data);
+      try {
+        await deleteFromHistory(id);
+        setHistory(await getHistory());
+        setError('');
+      } catch (err) { setError(err.message); }
     }
   };
 
   const handleClearAll = async () => {
     if (window.confirm("WARNING: Are you sure you want to clear your entire scan history? This action is permanent.")) {
-      await clearHistory();
-      setHistory([]);
+      try {
+        await clearHistory();
+        setHistory([]);
+        setError('');
+      } catch (err) { setError(err.message); }
     }
   };
 
   const navigateToResult = (item) => {
-    navigate(`/results/${item.analysis_id}`, { state: { data: item } });
+    navigate(`/results/${item.analysis_id}`);
   };
 
   // Color selection for scores
@@ -68,6 +77,7 @@ export default function HistoryPage() {
         )}
       </div>
 
+      {error && <p role="alert" className="scan-error-alert">{error}</p>}
       {history.length > 0 ? (
         <div className="card history-table-card animate-fade-in">
           <div className="history-table-wrapper">

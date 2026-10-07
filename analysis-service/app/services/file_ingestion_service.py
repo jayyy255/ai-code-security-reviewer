@@ -4,6 +4,8 @@ import shutil
 import tempfile
 import zipfile
 import tarfile
+import stat
+from pathlib import PurePosixPath, PureWindowsPath
 from pathlib import Path
 from contextlib import contextmanager
 from pydantic import BaseModel, Field
@@ -62,7 +64,7 @@ def sanitize_filename(filename: str) -> str:
     clean = clean.replace('\\', '/').split('/')[-1]
     clean = re.sub(r'\.+[/\\]', '', clean)
     clean = re.sub(r'[^a-zA-Z0-9_\-\.\+]', '_', clean)
-    return clean or "sanitized_file.txt"
+    return clean if clean not in ("", ".", "..") else "sanitized_file.txt"
 
 def is_binary_content(data: bytes) -> bool:
     """
@@ -72,6 +74,11 @@ def is_binary_content(data: bytes) -> bool:
         return False
     if b'\x00' in data:
         return True
+    try:
+        data.decode("utf-8")
+        return False
+    except UnicodeDecodeError:
+        pass
     # If more than 30% non-text bytes in first 1024 bytes
     sample = data[:1024]
     text_characters = bytes(range(32, 127)) + b'\n\r\t\b'
@@ -94,6 +101,11 @@ def classify_file(filename: str, content_sample: bytes = b"") -> FileClassificat
             is_quarantined=True,
             warning="Dangerous executable/binary rejected from dynamic execution."
         )
+
+    if ext not in ARCHIVE_EXTENSIONS | DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS and is_binary_content(content_sample):
+        return FileClassification(category="Binary/executable", extension=ext,
+                                  is_safe_for_static_analysis=False, is_quarantined=True,
+                                  warning="Binary content detected; skipped from static parsing.")
 
     if base == "dockerfile" or ext in CONFIG_EXTENSIONS:
         return FileClassification(category="Configuration", extension=ext, is_safe_for_static_analysis=True)
@@ -138,10 +150,17 @@ def extract_text_from_document(file_path: str) -> str:
                     extracted_text.append(text)
             return "\n".join(extracted_text)
         except Exception as e:
-            return f"[Error extracting PDF text: {str(e)}]"
+            raise ValueError("Unable to extract text from this PDF.") from e
 
     elif ext in (".docx", ".doc"):
         try:
+            if ext == ".docx":
+                with zipfile.ZipFile(file_path) as archive:
+                    entries = archive.infolist()
+                    unpacked = sum(entry.file_size for entry in entries)
+                    if (len(entries) > MAX_ARCHIVE_ENTRIES or unpacked > MAX_UNCOMPRESSED_SIZE
+                            or unpacked / max(os.path.getsize(file_path), 1) > MAX_COMPRESSION_RATIO):
+                        raise ValueError("Word document exceeds safe decompression limits.")
             import docx
             doc = docx.Document(file_path)
             for p in doc.paragraphs:
@@ -149,7 +168,7 @@ def extract_text_from_document(file_path: str) -> str:
                     extracted_text.append(p.text)
             return "\n".join(extracted_text)
         except Exception as e:
-            return f"[Error extracting Word text: {str(e)}]"
+            raise ValueError("Unable to extract text from this Word document.") from e
 
     else:
         try:
@@ -158,82 +177,67 @@ def extract_text_from_document(file_path: str) -> str:
         except Exception as e:
             return f"[Error reading file: {str(e)}]"
 
-def safe_extract_archive(archive_path: str, destination_dir: str) -> list[str]:
-    """
-    Safely decompresses a zip/tar archive enforcing:
-    - Path traversal checks (no absolute paths or '../')
-    - Zip bomb limits (max entries, max total size, compression ratio)
-    - Recursive archive limits
-    Returns list of extracted relative file paths.
-    """
-    extracted_files = []
-    total_uncompressed_size = 0
+def safe_extract_archive(archive_path: str, destination_dir: str, max_uncompressed_size: int = MAX_UNCOMPRESSED_SIZE) -> list[str]:
+    """Validate every member before writing; never follow links or nested archives."""
+    dest = Path(destination_dir).resolve()
     archive_size = os.path.getsize(archive_path) or 1
 
+    def validate(members):
+        if len(members) > MAX_ARCHIVE_ENTRIES:
+            raise ValueError("Archive exceeds maximum allowed entries limit.")
+        total = 0
+        seen = set()
+        for name, size, is_file in members:
+            path = PurePosixPath(name.replace("\\", "/"))
+            if (path.is_absolute() or PureWindowsPath(name).drive or ".." in path.parts
+                    or any(":" in part for part in path.parts)):
+                raise ValueError(f"Zip slip / Tar traversal attempt detected: {name}")
+            target = (dest / str(path)).resolve()
+            if not target.is_relative_to(dest) or target == dest:
+                raise ValueError(f"Zip slip / Tar traversal attempt detected: {name}")
+            # Reject collisions including Windows case folding and trailing dots/spaces.
+            identity = str(path).rstrip(" .").casefold()
+            if is_file and identity in seen:
+                raise ValueError(f"Duplicate archive entry: {name}")
+            seen.add(identity)
+            total += size
+            if size > MAX_FILE_SIZE_BYTES or total > max_uncompressed_size:
+                raise ValueError("Archive uncompressed size exceeds limit. Potential Zip Bomb.")
+            if total / archive_size > MAX_COMPRESSION_RATIO:
+                raise ValueError("Archive compression ratio exceeds safe limit. Potential Zip Bomb.")
+
+    extracted = []
     if zipfile.is_zipfile(archive_path):
-        with zipfile.ZipFile(archive_path, 'r') as zf:
-            infolist = zf.infolist()
-            if len(infolist) > MAX_ARCHIVE_ENTRIES:
-                raise ValueError(f"Archive exceeds maximum allowed entries limit ({len(infolist)} > {MAX_ARCHIVE_ENTRIES}).")
-
-            dest_path = Path(destination_dir).resolve()
-
-            for member in infolist:
-                # Path traversal check
-                member_path = (dest_path / member.filename).resolve()
-                if not str(member_path).startswith(str(dest_path)):
-                    raise ValueError(f"Zip slip path traversal attempt detected: {member.filename}")
-
-                total_uncompressed_size += member.file_size
-                if total_uncompressed_size > MAX_UNCOMPRESSED_SIZE:
-                    raise ValueError(f"Archive uncompressed size exceeds limit ({total_uncompressed_size} > {MAX_UNCOMPRESSED_SIZE}). Potential Zip Bomb.")
-
-                ratio = total_uncompressed_size / archive_size
-                if ratio > MAX_COMPRESSION_RATIO:
-                    raise ValueError(f"Archive compression ratio exceeds safe limit ({ratio:.1f} > {MAX_COMPRESSION_RATIO}). Potential Zip Bomb.")
-
-                # Check recursive archive
-                member_ext = os.path.splitext(member.filename)[1].lower()
-                if member_ext in ARCHIVE_EXTENSIONS:
-                    # Skip or reject nested archive
-                    continue
-
-                # Check dangerous binary
-                if member_ext in DANGEROUS_BINARY_EXTENSIONS:
-                    continue
-
-                if not member.is_dir():
-                    zf.extract(member, destination_dir)
-                    extracted_files.append(member.filename)
-
-    elif tarfile.is_tarfile(archive_path):
-        with tarfile.open(archive_path, 'r:*') as tf:
-            members = tf.getmembers()
-            if len(members) > MAX_ARCHIVE_ENTRIES:
-                raise ValueError(f"Tar archive exceeds entry limit ({len(members)} > {MAX_ARCHIVE_ENTRIES}).")
-
-            dest_path = Path(destination_dir).resolve()
-
+        with zipfile.ZipFile(archive_path) as archive:
+            members = archive.infolist()
+            validate([(m.filename, m.file_size, not m.is_dir()) for m in members])
+            if any(stat.S_ISLNK(m.external_attr >> 16) for m in members):
+                raise ValueError("Archive symbolic links are not permitted.")
             for member in members:
-                member_path = (dest_path / member.name).resolve()
-                if not str(member_path).startswith(str(dest_path)):
-                    raise ValueError(f"Tar traversal attempt detected: {member.name}")
-
-                total_uncompressed_size += member.size
-                if total_uncompressed_size > MAX_UNCOMPRESSED_SIZE:
-                    raise ValueError("Tar uncompressed size exceeds limit.")
-
-                member_ext = os.path.splitext(member.name)[1].lower()
-                if member_ext in DANGEROUS_BINARY_EXTENSIONS:
+                if member.is_dir():
                     continue
-
-                if member.isfile():
-                    tf.extract(member, destination_dir)
-                    extracted_files.append(member.name)
+                target = dest / member.filename.replace("\\", "/")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+                extracted.append(target.relative_to(dest).as_posix())
+    elif tarfile.is_tarfile(archive_path):
+        with tarfile.open(archive_path, "r:*") as archive:
+            members = archive.getmembers()
+            validate([(m.name, m.size, m.isfile()) for m in members])
+            if any(not (m.isfile() or m.isdir()) for m in members):
+                raise ValueError("Archive links and special files are not permitted.")
+            for member in members:
+                if not member.isfile():
+                    continue
+                target = dest / member.name.replace("\\", "/")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+                extracted.append(target.relative_to(dest).as_posix())
     else:
-        raise ValueError("Unsupported or invalid archive format.")
-
-    return extracted_files
+        raise ValueError("Unsupported or invalid archive format. Use ZIP or TAR.")
+    return extracted
 
 @contextmanager
 def safe_temp_workspace():

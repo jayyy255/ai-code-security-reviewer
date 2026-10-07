@@ -2,6 +2,7 @@ import json
 import subprocess
 import tempfile
 import os
+import yaml
 from pathlib import Path
 from app.services.scanner_interface import BaseScanner, ScannerStatusModel
 
@@ -71,11 +72,12 @@ class SemgrepScanner(BaseScanner):
     def get_status(self) -> ScannerStatusModel:
         available = self._version is not None
         rule_files = list(self.rules_path.glob("*.yml")) if self.rules_path.exists() else []
+        rule_count = sum(len((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("rules", [])) for path in rule_files)
         return ScannerStatusModel(
             scanner_name="Semgrep",
             available=available,
             version=self._version,
-            rules_loaded=len(rule_files),
+            rules_loaded=rule_count,
             capabilities=[
                 "Multi-language AST pattern matching",
                 "Custom security rulesets (14 categories)",
@@ -94,27 +96,38 @@ class SemgrepScanner(BaseScanner):
         clean_lang = (language or "").lower().strip()
         ext = LANGUAGE_EXTENSION_MAP.get(clean_lang, ".txt")
 
-        # Handle Dockerfile naming
-        suffix = ext if ext.startswith(".") else f".{clean_lang or 'txt'}"
-
-        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False, encoding="utf-8")
-        try:
-            temp_file.write(code)
-            temp_file.close()
-            temp_path = temp_file.name
-            findings = self._run_semgrep_on_target(temp_path, original_file_name=file_name)
+        if not clean_lang and file_name != "snippet":
+            ext = Path(file_name).suffix or ".txt"
+        with tempfile.TemporaryDirectory() as directory:
+            name = "Dockerfile" if ext == "Dockerfile" or file_name.lower() == "dockerfile" else "scan_target" + ext
+            temp_path = Path(directory) / name
+            temp_path.write_text(code, encoding="utf-8")
+            findings = self._run_semgrep_on_target(str(temp_path), original_file_name=file_name)
+            code_lines = code.splitlines()
+            for finding in findings:
+                line = finding.get("line")
+                if isinstance(line, int) and 1 <= line <= len(code_lines):
+                    finding["snippet"] = code_lines[line - 1].strip()
             return findings
-        finally:
-            if os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
 
     def scan_path(self, target_path: str) -> list[dict]:
         if not os.path.exists(target_path):
             return []
-        return self._run_semgrep_on_target(target_path)
+        findings = self._run_semgrep_on_target(target_path)
+        for f in findings:
+            if not f.get("snippet") and f.get("line"):
+                resolved = os.path.join(target_path, f.get("file_path", "")) if os.path.isdir(target_path) else target_path
+                if os.path.isfile(resolved):
+                    try:
+                        flines = Path(resolved).read_text(encoding="utf-8", errors="ignore").splitlines()
+                        if 1 <= f["line"] <= len(flines):
+                            f["snippet"] = flines[f["line"] - 1].strip()
+                    except Exception:
+                        pass
+        return findings
 
     def _run_semgrep_on_target(self, target_path: str, original_file_name: str | None = None) -> list[dict]:
-        cmd = ["semgrep", "scan", "--json"]
+        cmd = ["semgrep", "scan", "--json", "--metrics=off", "--disable-version-check", "--no-git-ignore"]
 
         # If custom rules exist, include them
         if self.rules_path.exists() and any(self.rules_path.glob("*.yml")):
@@ -134,23 +147,11 @@ class SemgrepScanner(BaseScanner):
                 timeout=120
             )
 
-            # Semgrep returns 0 for no findings, 1 for findings found
             if result.returncode not in (0, 1):
-                # Fallback to auto config if custom rules errored
-                fallback = subprocess.run(
-                    ["semgrep", "scan", "--config", "auto", target_path, "--json"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="ignore",
-                    timeout=120
-                )
-                if fallback.returncode in (0, 1) and fallback.stdout.strip():
-                    data = json.loads(fallback.stdout)
-                else:
-                    return []
-            else:
-                data = json.loads(result.stdout) if result.stdout.strip() else {"results": []}
+                raise RuntimeError("Semgrep scan failed. Check the engine and local rule configuration.")
+            data = json.loads(result.stdout)
+            if data.get("errors"):
+                raise RuntimeError("Semgrep could not fully parse or scan the submitted files. Check the selected language and syntax.")
 
             findings = []
             for finding in data.get("results", []):
@@ -171,6 +172,8 @@ class SemgrepScanner(BaseScanner):
 
                 # Determine category
                 category = metadata.get("category") or "security"
+                raw_lines = extra.get("lines")
+                snippet = raw_lines.strip() if isinstance(raw_lines, str) and raw_lines.strip() else None
 
                 findings.append({
                     "scanner": "semgrep",
@@ -178,7 +181,8 @@ class SemgrepScanner(BaseScanner):
                     "file_path": display_path,
                     "line": line_num,
                     "column": col_num,
-                    "severity": SEVERITY_MAP.get(raw_sev, "LOW"),
+                    "snippet": snippet,
+                    "severity": metadata.get("severity", SEVERITY_MAP.get(raw_sev, "LOW")).upper(),
                     "category": category,
                     "message": extra.get("message") or "Security rule triggered.",
                     "source": "semgrep",
@@ -199,7 +203,7 @@ class SemgrepScanner(BaseScanner):
 
         except Exception as e:
             print(f"Semgrep execution error: {e}")
-            return []
+            raise RuntimeError("Static analysis did not complete. No security report was produced.") from e
 
 # Singleton instance
 semgrep_scanner = SemgrepScanner()

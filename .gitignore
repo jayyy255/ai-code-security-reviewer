@@ -22,5 +22,7 @@ dist/
 
 # Logs
 *.log
+.local/
+analysis-service/new-env/
 
 analysis-service/app/services/.env

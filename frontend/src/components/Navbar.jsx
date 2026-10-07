@@ -1,4 +1,3 @@
-import React from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { ShieldAlert, Sparkles, Code, History, User, LogOut } from 'lucide-react';
 import { useAuth } from '../components/UserContext';

@@ -36,6 +36,67 @@ rules:
       - pattern: child_process.execSync(...)
       - pattern: exec($CMD, ...)
       - pattern: execSync($CMD, ...)
+      - pattern: 'spawn($CMD, ..., {shell: true, ...})'
+      - patterns:
+          - pattern-inside: |
+              $CMD = `...${...}...`
+              ...
+              require('child_process').exec($CMD, ...)
+          - pattern: require('child_process').exec($CMD, ...)
+      - patterns:
+          - pattern-inside: |
+              $CMD = `...${...}...`
+              ...
+              child_process.exec($CMD, ...)
+          - pattern: child_process.exec($CMD, ...)
+
+  - id: js-sql-injection
+    languages: [javascript, typescript]
+    message: "SQL query constructed with dynamic string interpolation or concatenation instead of parameterized queries."
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+      owasp: ["A03:2021 - Injection"]
+      category: injection
+      likelihood: HIGH
+      impact: HIGH
+      confidence: HIGH
+    pattern-either:
+      - pattern: $DB.query(`...${...}...`, ...)
+      - pattern: $DB.query("..." + $X, ...)
+      - pattern: $POOL.query(`...${...}...`, ...)
+      - pattern: $POOL.query("..." + $X, ...)
+      - pattern: $CLIENT.query(`...${...}...`, ...)
+      - pattern: $CLIENT.query("..." + $X, ...)
+      - pattern: $KNEX.raw(`...${...}...`, ...)
+      - pattern: $KNEX.raw("..." + $X, ...)
+      - pattern: $CONN.execute(`...${...}...`, ...)
+      - pattern: $CONN.execute("..." + $X, ...)
+      - pattern: $PRISMA.$queryRawUnsafe(...)
+      - patterns:
+          - pattern-inside: |
+              $Q = `...${...}...`
+              ...
+              $DB.query($Q, ...)
+          - pattern: $DB.query($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = "..." + $X
+              ...
+              $DB.query($Q, ...)
+          - pattern: $DB.query($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = `...${...}...`
+              ...
+              $POOL.query($Q, ...)
+          - pattern: $POOL.query($Q, ...)
+      - patterns:
+          - pattern-inside: |
+              $Q = `...${...}...`
+              ...
+              $CLIENT.query($Q, ...)
+          - pattern: $CLIENT.query($Q, ...)
 
   - id: js-vm-code-execution
     languages: [javascript, typescript]

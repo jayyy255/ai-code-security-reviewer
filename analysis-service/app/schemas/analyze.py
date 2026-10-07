@@ -23,8 +23,10 @@ class Finding(BaseModel):
     explanation: str | None = None
     risk: str | None = None
     remediation: list[str] = Field(default_factory=list)
+    snippet: str | None = None
     fixed_code: str | None = None
     requires_verification: bool = False
+    advisory_source: str = "local"
 
 class AnalyzeSummary(BaseModel):
     security_score: float
@@ -60,7 +62,7 @@ class PrivacyMetadataInfo(BaseModel):
     storage_type: str = "none"
 
 class AnalyzeRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=1_000_000)
     language: str | None = Field(default=None, description="Programming language or extension")
     file_name: str | None = Field(default="snippet", description="Optional file name")
     ephemeral: bool = Field(default=False, description="Whether to run scan in-memory without persistence")
@@ -72,7 +74,7 @@ class AnalyzeRequest(BaseModel):
         return value
 
 class BatchScanRequest(BaseModel):
-    files: list[dict] # [{"filename": "...", "content": "...", "language": "..."}]
+    files: list[dict] = Field(min_length=1, max_length=50)
     ephemeral: bool = False
 
 class CommitScanRequest(BaseModel):

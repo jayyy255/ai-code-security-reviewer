@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
+import '../services/editor';
 import { 
   Play, 
-  Terminal, 
   Code, 
   Sparkles, 
   ShieldAlert, 
   CheckCircle,
-  HelpCircle,
   UploadCloud,
   GitBranch,
   FileText,
@@ -17,7 +16,6 @@ import {
   Lock,
   EyeOff,
   AlertTriangle,
-  FolderArchive,
   RefreshCw
 } from 'lucide-react';
 import { analyzeCode, scanUploadedFiles, analyzeCommit } from '../services/api';
@@ -156,12 +154,6 @@ export default function AnalyzePage() {
   const [commitSha, setCommitSha] = useState('');
   const [strategy, setStrategy] = useState('auto'); // 'auto' | 'full' | 'incremental'
 
-  useEffect(() => {
-    if (PRESETS[language] && activeMode === 'paste') {
-      setCode(PRESETS[language]);
-    }
-  }, [language, activeMode]);
-
   // Loading animation simulation
   useEffect(() => {
     let interval;
@@ -189,25 +181,17 @@ export default function AnalyzePage() {
   };
 
   const processUploadedFiles = async (fileList) => {
-    const fileObjs = [];
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      try {
-        const text = await file.text();
-        fileObjs.push({
-          filename: file.name,
-          size: file.size,
-          content: text
-        });
-      } catch (err) {
-        fileObjs.push({
-          filename: file.name,
-          size: file.size,
-          content: `[Binary or non-text content - ${file.type || 'unknown'}]`
-        });
-      }
+    const files = Array.from(fileList);
+    if (uploadedFiles.length + files.length > 50 || files.some(file => file.size > 50 * 1024 * 1024)) {
+      setError('Select up to 50 files, each no larger than 50 MB.');
+      return;
     }
-    setUploadedFiles(prev => [...prev, ...fileObjs]);
+    if ([...uploadedFiles, ...files].reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) {
+      setError('The combined upload must be no larger than 50 MB.');
+      return;
+    }
+    setError(null);
+    setUploadedFiles(prev => [...prev, ...files]);
   };
 
   // Submit handler based on active mode
@@ -236,7 +220,7 @@ export default function AnalyzePage() {
       }
 
       if (result) {
-        navigate(`/results/${result.analysis_id}`, { state: { data: result } });
+        navigate(`/results/${result.analysis_id}`);
       }
     } catch (err) {
       console.error("Scan error:", err);
@@ -258,7 +242,7 @@ export default function AnalyzePage() {
           </div>
           <h1>Multi-Mode Code Security Scanner</h1>
           <p className="subtitle">
-            Static AST analysis, 60+ security rulesets, secret scanning, honest malware engine reporting, and prompt-injection-hardened AI advisories.
+            Static AST analysis, 60+ security rules, secret scanning, honest malware engine reporting, and prompt-injection-hardened AI advisories.
           </p>
         </div>
 
@@ -422,7 +406,7 @@ export default function AnalyzePage() {
                     <div key={idx} className="file-item-card">
                       <FileText size={16} className="text-accent" />
                       <div className="file-item-info">
-                        <span className="file-item-name">{file.filename}</span>
+                        <span className="file-item-name">{file.name}</span>
                         <span className="file-item-size">{(file.size / 1024).toFixed(1)} KB</span>
                       </div>
                     </div>

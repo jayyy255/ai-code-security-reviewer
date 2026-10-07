@@ -3,6 +3,16 @@ from app.services.semgrep_service import run_scan
 from app.services.gitleaks_service import run_secret_scan
 from app.services.prompt_injection_service import scan_for_prompt_injection
 
+
+def test_dockerfile_paste_uses_the_real_dockerfile_name():
+    findings = run_scan('FROM node:22-alpine\nUSER root\n', language='dockerfile')
+    assert any('running-as-root' in finding['rule_id'] for finding in findings)
+
+
+def test_parameterized_sql_is_not_flagged_as_injection():
+    findings = run_scan('cursor.execute("SELECT * FROM users WHERE id = ?", (uid,))', language='python')
+    assert not any('sql-injection' in finding['rule_id'] for finding in findings)
+
 def test_pasted_python_sql_injection():
     code = """
 import sqlite3
@@ -56,3 +66,42 @@ func run(cmd string) {
 """
     go_findings = run_scan(go_code, language="go")
     assert any("command" in f["rule_id"].lower() for f in go_findings)
+
+def test_pasted_python_variable_sql_injection():
+    code = """
+import sqlite3
+def get_user(uid):
+    db = sqlite3.connect("app.db")
+    cursor = db.cursor()
+    query = f"SELECT * FROM users WHERE id = {uid}"
+    cursor.execute(query)
+"""
+    findings = run_scan(code, language="python")
+    assert len(findings) > 0
+    rule_ids = [f["rule_id"] for f in findings]
+    assert any("sql-injection" in r for r in rule_ids)
+
+def test_pasted_python_variable_command_injection():
+    code = """
+import os
+def ping(host):
+    cmd = f"ping -c 1 {host}"
+    os.system(cmd)
+"""
+    findings = run_scan(code, language="python")
+    assert len(findings) > 0
+    rule_ids = [f["rule_id"] for f in findings]
+    assert any("command-injection" in r for r in rule_ids)
+
+def test_pasted_js_sql_injection():
+    code = """
+const db = require('./db');
+function findUser(userId) {
+    const q = `SELECT * FROM users WHERE id = ${userId}`;
+    return db.query(q);
+}
+"""
+    findings = run_scan(code, language="javascript")
+    assert len(findings) > 0
+    rule_ids = [f["rule_id"] for f in findings]
+    assert any("sql-injection" in r for r in rule_ids)

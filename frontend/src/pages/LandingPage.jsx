@@ -1,15 +1,11 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { 
   ShieldAlert, 
   Key, 
   PieChart, 
   Sparkles, 
-  ChevronRight, 
   ArrowRight, 
-  Code,
   Terminal,
-  Lock
 } from 'lucide-react';
 import './LandingPage.css';
 

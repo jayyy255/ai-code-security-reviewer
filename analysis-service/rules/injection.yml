@@ -15,6 +15,12 @@ rules:
       - pattern: exec($X + $Y)
       - pattern: execSync($X + $Y)
       - pattern: Runtime.getRuntime().exec($X + $Y)
+      - patterns:
+          - pattern-inside: |
+              $CMD = $X + $Y
+              ...
+              exec($CMD, ...)
+          - pattern: exec($CMD, ...)
 
   - id: generic-path-traversal-read
     languages: [javascript, typescript, python, go, java]
@@ -32,6 +38,12 @@ rules:
       - pattern: fs.readFile($BASE + $FILE, ...)
       - pattern: open($BASE + $FILE, ...)
       - pattern: os.ReadFile($BASE + $FILE)
+      - patterns:
+          - pattern-inside: |
+              $P = $BASE + $FILE
+              ...
+              open($P, ...)
+          - pattern: open($P, ...)
 
   - id: python-ldap-injection
     languages: [python]

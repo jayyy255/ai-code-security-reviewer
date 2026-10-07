@@ -1,50 +1,52 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
 
 :root {
-  /* Color Palette (Obsidian Dark Theme) */
-  --bg-main: #0b0c10;
-  --bg-card: #12131c;
-  --bg-input: #1b1c26;
-  --border-color: #262837;
-  --border-hover: #3d415a;
+  /* Soft Modern Twilight Slate Palette */
+  --bg-main: #0f141c;
+  --bg-card: #171d27;
+  --bg-card-hover: #1e2634;
+  --bg-input: #1e2633;
+  --border-color: #273142;
+  --border-hover: #3b4961;
   
-  --text-primary: #f3f4f6;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
 
-  /* Accent Colors */
-  --accent-purple: #a855f7;
-  --accent-purple-glow: rgba(168, 85, 247, 0.4);
-  --accent-purple-bg: rgba(168, 85, 247, 0.1);
+  /* Soft Accent Colors */
+  --accent-purple: #818cf8;
+  --accent-purple-glow: rgba(129, 140, 248, 0.25);
+  --accent-purple-bg: rgba(129, 140, 248, 0.12);
   
-  --severity-critical: #ef4444;
-  --severity-critical-bg: rgba(239, 68, 68, 0.15);
-  --severity-critical-border: rgba(239, 68, 68, 0.4);
+  --severity-critical: #f87171;
+  --severity-critical-bg: rgba(248, 113, 113, 0.12);
+  --severity-critical-border: rgba(248, 113, 113, 0.3);
   
-  --severity-high: #f97316;
-  --severity-high-bg: rgba(249, 115, 22, 0.15);
-  --severity-high-border: rgba(249, 115, 22, 0.4);
+  --severity-high: #fb923c;
+  --severity-high-bg: rgba(251, 146, 60, 0.12);
+  --severity-high-border: rgba(251, 146, 60, 0.3);
   
-  --severity-medium: #eab308;
-  --severity-medium-bg: rgba(234, 179, 8, 0.15);
-  --severity-medium-border: rgba(234, 179, 8, 0.4);
+  --severity-medium: #facc15;
+  --severity-medium-bg: rgba(250, 204, 21, 0.12);
+  --severity-medium-border: rgba(250, 204, 21, 0.3);
   
-  --severity-low: #3b82f6;
-  --severity-low-bg: rgba(59, 130, 246, 0.15);
-  --severity-low-border: rgba(59, 130, 246, 0.4);
+  --severity-low: #60a5fa;
+  --severity-low-bg: rgba(96, 165, 250, 0.12);
+  --severity-low-border: rgba(96, 165, 250, 0.3);
 
-  --status-safe: #22c55e;
-  --status-safe-bg: rgba(34, 197, 94, 0.15);
+  --status-safe: #34d399;
+  --status-safe-bg: rgba(52, 211, 153, 0.12);
+  --status-safe-border: rgba(52, 211, 153, 0.3);
 
   /* Fonts */
   --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
   --font-mono: 'Fira Code', monospace;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  --shadow-glow: 0 0 15px rgba(168, 85, 247, 0.25);
+  /* Soft Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 25px -4px rgba(0, 0, 0, 0.28), 0 4px 8px -2px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 18px rgba(129, 140, 248, 0.2);
   
   background-color: var(--bg-main);
   color: var(--text-primary);
@@ -309,7 +311,7 @@ p {
 
 /* Navbar Styling */
 .navbar {
-  background: rgba(18, 19, 28, 0.85);
+  background: rgba(23, 29, 39, 0.85);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-color);
   position: sticky;
@@ -397,7 +399,7 @@ p {
 
 /* Footer Styling */
 .footer {
-  background: #08090d;
+  background: #0b0f15;
   border-top: 1px solid var(--border-color);
   padding: 20px 0;
   margin-top: auto;

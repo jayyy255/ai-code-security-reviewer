@@ -1,42 +1,32 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useLocation, useNavigate, Link } from 'react-router-dom';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer 
-} from 'recharts';
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { 
   ShieldAlert, 
   ArrowLeft, 
   Copy, 
   Check, 
   ListFilter,
-  ExternalLink,
   ShieldCheck,
   CheckCircle2,
   AlertTriangle,
   FileCode,
-  FolderTree,
-  Bug,
-  Lock,
   Download,
   Info,
-  Layers,
   GitCommit,
   Sparkles,
   ShieldX
 } from 'lucide-react';
+import { useAuth } from '../components/UserContext';
 import { getAnalysisResult } from '../services/api';
 import './ResultsPage.css';
 
 export default function ResultsPage() {
   const { analysisId } = useParams();
-  const location = useLocation();
+  const { loading: sessionLoading, currentUser } = useAuth();
   const navigate = useNavigate();
   
   const [result, setResult] = useState(null);
-  const [selectedFinding, setSelectedFinding] = useState(null);
+  const [chosenFinding, setSelectedFinding] = useState(null);
   const [filterSeverity, setFilterSeverity] = useState('ALL');
   const [filterSource, setFilterSource] = useState('ALL');
   const [selectedFile, setSelectedFile] = useState('ALL');
@@ -44,32 +34,23 @@ export default function ResultsPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    if (sessionLoading) return;
+    let active = true;
     async function loadResult() {
-      if (location.state && location.state.data) {
-        const data = location.state.data;
+      try {
+        const data = await getAnalysisResult(analysisId);
+        if (!active) return;
+        if (!data) { navigate('/analyze'); return; }
         setResult(data);
-        if (data.findings && data.findings.length > 0) {
-          setSelectedFinding(data.findings[0]);
-        }
-      } else {
-        try {
-          const data = await getAnalysisResult(analysisId);
-          if (data) {
-            setResult(data);
-            if (data.findings && data.findings.length > 0) {
-              setSelectedFinding(data.findings[0]);
-            }
-          } else {
-            navigate('/analyze');
-          }
-        } catch (err) {
-          console.error("Error loading scan result:", err);
-          navigate('/analyze');
-        }
+        setSelectedFinding(data.findings?.[0] || null);
+      } catch (err) {
+        console.error('Error loading scan result:', err);
+        if (active) navigate('/analyze');
       }
     }
     loadResult();
-  }, [analysisId, location.state, navigate]);
+    return () => { active = false; };
+  }, [analysisId, sessionLoading, currentUser, navigate]);
 
   if (!result) {
     return (
@@ -101,9 +82,16 @@ export default function ResultsPage() {
     return matchSev && matchSource && matchFile;
   });
 
-  const handleCopyCode = (text) => {
+  const selectedFinding = filteredFindings.includes(chosenFinding) ? chosenFinding : filteredFindings[0] || null;
+
+  const handleCopyCode = async (text) => {
     if (!text) return;
-    navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      setCopied(false);
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -153,6 +141,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
     const s = (status || 'unavailable').toLowerCase();
     if (s === 'clean') return { label: 'CLEAN', color: 'badge-safe', icon: <ShieldCheck size={14} /> };
     if (s === 'infected') return { label: 'INFECTED', color: 'badge-danger', icon: <ShieldX size={14} /> };
+    if (s === 'failed') return { label: 'FAILED', color: 'badge-warning', icon: <AlertTriangle size={14} /> };
     if (s === 'suspicious') return { label: 'SUSPICIOUS', color: 'badge-warning', icon: <AlertTriangle size={14} /> };
     return { label: 'UNAVAILABLE', color: 'badge-neutral', icon: <Info size={14} /> };
   };
@@ -186,13 +175,13 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
       {/* Summary Score Dashboard */}
       <div className="results-summary-grid">
         <div className="summary-card score-card">
-          <div className="score-value-circle" style={{ borderColor: score >= 80 ? '#22c55e' : score >= 60 ? '#eab308' : '#ef4444' }}>
+          <div className="score-value-circle" style={{ borderColor: score >= 80 ? 'var(--status-safe)' : score >= 60 ? 'var(--severity-medium)' : 'var(--severity-critical)' }}>
             <span className="score-number">{score}</span>
             <span className="score-label">/ 100</span>
           </div>
           <div className="score-text">
-            <h3>Overall Security Score</h3>
-            <p>{score >= 80 ? 'Strong Security Posture' : score >= 60 ? 'Moderate Risks Detected' : 'Action Required: High Exposure'}</p>
+            <h3>Static Analysis Score</h3>
+            <p>{!result.files_analyzed?.length ? 'No files eligible for static analysis' : findings.length === 0 ? 'No issues detected by the configured rules' : score >= 80 ? 'Review the findings below' : score >= 60 ? 'Moderate Risks Detected' : 'Action Required: High Exposure'}</p>
           </div>
         </div>
 
@@ -228,6 +217,17 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
             * We never claim clean when the antivirus daemon is offline or uninstalled.
           </div>
         </div>
+      </div>
+
+      <div className="card" style={{ padding: '16px', marginBottom: '20px' }}>
+        <strong>Scan coverage & privacy</strong>
+        <p>{result.files_analyzed?.length || 0} files analyzed; {result.files_skipped?.length || 0} files skipped. Static scores cannot establish that code is safe.</p>
+        {scanner_status.map(scanner => (
+          <p key={scanner.scanner_name}>{scanner.scanner_name}: {scanner.status_message} ({scanner.rules_loaded} rules)</p>
+        ))}
+        <p>{privacy_metadata.ephemeral_scan ? 'Ephemeral: this report is not saved.' : 'Findings and snippets are saved; complete source code is not stored.'}</p>
+        {result.files_skipped?.length > 0 && <ul>{result.files_skipped.map((file, i) => <li key={i}>{file}</li>)}</ul>}
+        {result.persistence_warning && <p role="alert">{result.persistence_warning}</p>}
       </div>
 
       {/* Commit Diff Navigation (If Commit Scan) */}
@@ -276,7 +276,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
             <option value="semgrep">Semgrep AST Rules</option>
             <option value="gitleaks">Gitleaks Secret Scanner</option>
             <option value="prompt_injection_guard">Prompt Injection Guard</option>
-            <option value="ai">AI Advisory</option>
+
           </select>
 
           {filesList.length > 1 && (
@@ -306,7 +306,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
             </div>
           ) : (
             filteredFindings.map((finding, idx) => {
-              const isSelected = selectedFinding?.rule_id === finding.rule_id && selectedFinding?.line === finding.line;
+              const isSelected = selectedFinding?.rule_id === finding.rule_id && selectedFinding?.line === finding.line && selectedFinding?.file_path === finding.file_path;
               const sevClass = (finding.severity || 'low').toLowerCase();
 
               return (
@@ -320,6 +320,12 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
                     <span className="source-tag">{finding.source || 'scanner'}</span>
                   </div>
                   <h4 className="finding-title">{finding.message}</h4>
+                  {finding.snippet && (
+                    <div className="card-snippet-preview">
+                      <span className="line-prefix">L{finding.line || '1'}:</span>
+                      <code>{finding.snippet}</code>
+                    </div>
+                  )}
                   <div className="finding-card-meta">
                     <span className="file-meta"><FileCode size={13} /> {finding.file_path}:{finding.line || '1'}</span>
                     <span className="rule-meta"><code>{finding.rule_id}</code></span>
@@ -342,13 +348,13 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
                   <span className="category-tag">{selectedFinding.category || 'Security'}</span>
                   {selectedFinding.requires_verification && (
                     <span className="badge badge-warning">
-                      <Sparkles size={12} /> AI Advisory - Verify
+                      <Sparkles size={12} /> {selectedFinding.advisory_source === 'ai' ? 'AI Advisory - Verify' : 'Suggested Fix - Verify'}
                     </span>
                   )}
                 </div>
                 <h2>{selectedFinding.message}</h2>
                 <div className="inspector-location">
-                  <strong>Location:</strong> <code>{selectedFinding.file_path}</code> (Line {selectedFinding.line || 'N/A'})
+                  <strong>Location:</strong> <code>{selectedFinding.file_path}</code> &bull; Line <strong>{selectedFinding.line || '1'}</strong>
                 </div>
               </div>
 
@@ -361,6 +367,20 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
                   {selectedFinding.cwe?.map((c, i) => (
                     <span key={i} className="tag-pill cwe-pill">{c}</span>
                   ))}
+                </div>
+              )}
+
+              {/* Problematic Code Section */}
+              {selectedFinding.snippet && (
+                <div className="inspector-section problematic-section">
+                  <div className="problematic-header">
+                    <AlertTriangle size={16} className="text-warning-icon" />
+                    <h3>Problematic Code (Line {selectedFinding.line || '1'})</h3>
+                  </div>
+                  <div className="problematic-code-box">
+                    <div className="line-indicator">Line {selectedFinding.line || '1'}</div>
+                    <code className="problematic-code-text">{selectedFinding.snippet}</code>
+                  </div>
                 </div>
               )}
 
@@ -377,7 +397,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
                 </div>
               )}
 
-              {/* Remediation Points */}
+              {/* Recommended Remediation Steps */}
               {selectedFinding.remediation?.length > 0 && (
                 <div className="inspector-section">
                   <h3>Recommended Remediation</h3>
@@ -389,13 +409,16 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
                 </div>
               )}
 
-              {/* Suggested Code Fix */}
+              {/* Suggested Solution & Code Fix */}
               {selectedFinding.fixed_code && (
-                <div className="inspector-section">
+                <div className="inspector-section fix-section">
                   <div className="section-header-row">
-                    <h3>Suggested Code Fix</h3>
+                    <div className="fix-header-title">
+                      <CheckCircle2 size={16} className="text-safe-icon" />
+                      <h3>Suggested Solution & Code Fix</h3>
+                    </div>
                     <button className="btn-copy" onClick={() => handleCopyCode(selectedFinding.fixed_code)}>
-                      {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied' : 'Copy'}
+                      {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied' : 'Copy Solution'}
                     </button>
                   </div>
                   <pre className="code-fix-block">
