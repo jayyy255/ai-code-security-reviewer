@@ -24,27 +24,28 @@ test('failed paste and upload requests never return synthetic findings', async (
   await assert.rejects(api.scanUploadedFiles([new File(['test'], 'test.py')]), /Engine failed/);
   assert.equal(storage.size, 0);
 });
-test('guest history has usable dates and scores without full source', async () => {
-  await api.saveToHistory(report);
+test('history comes from authenticated server and strips full source', async () => {
+  globalThis.fetch = async (url) => { assert.ok(url.endsWith('/history')); return response([report]); };
   const [saved] = await api.getHistory();
   assert.equal(saved.score, 85);
-  assert.equal(saved.critical, 1);
-  assert.ok(Number.isFinite(Date.parse(saved.timestamp)));
   assert.equal(saved.code, undefined);
-  assert.equal((await api.getAnalysisResult(report.analysis_id)).analysis_id, report.analysis_id);
 });
+
 test('ephemeral results never enter browser storage', async () => {
   await api.saveToHistory({ ...report, privacy_metadata: { ephemeral_scan: true } });
   assert.equal(storage.size, 0);
   assert.equal((await api.getAnalysisResult(report.analysis_id)).analysis_id, report.analysis_id);
 });
-test('failed account-history sync preserves the guest report', async () => {
+test('expired sessions clear cached reports and notify the UI', async () => {
+  let expired = false;
+  globalThis.window = { dispatchEvent: event => { expired = event.type === 'reviewer:unauthorized'; } };
   await api.saveToHistory(report);
-  api.setLoggedInStatus(true);
-  globalThis.fetch = async () => response({ error: 'Database offline' }, 503);
-  await assert.rejects(api.syncLocalHistoryToBackend(), /Database offline/);
-  assert.ok(storage.get('reviewer_scan_history').includes('test-scan'));
+  globalThis.fetch = async () => response({ error: 'Please log in.' }, 401);
+  await assert.rejects(api.getHistory(), /Please log in/);
+  assert.ok(expired);
+  await assert.rejects(api.getAnalysisResult(report.analysis_id), /Please log in/);
 });
+
 test('failed delete and purge are reported to the caller', async () => {
   api.setLoggedInStatus(true);
   globalThis.fetch = async () => response({ error: 'Deletion failed' }, 500);
@@ -61,4 +62,25 @@ test('upload forwards original binary bytes via multipart', async () => {
   };
   await api.scanUploadedFiles([file], true);
   assert.equal(storage.size, 0);
+});
+
+test('automatic paste sends no misleading filename or explicit parser', async () => {
+  globalThis.fetch = async (_url, options) => {
+    const payload = JSON.parse(options.body);
+    assert.equal(payload.language, null);
+    assert.equal(payload.file_name, 'snippet');
+    return response({ ...report, language: 'javascript' });
+  };
+  assert.equal((await api.analyzeCode('const x = input;', null)).language, 'javascript');
+});
+
+test('language detection supports canceling stale requests', async () => {
+  const controller = new AbortController();
+  const aborted = new DOMException('Canceled', 'AbortError');
+  globalThis.fetch = async (url, options) => {
+    assert.ok(url.endsWith('/api/v1/language/detect'));
+    assert.equal(options.signal, controller.signal);
+    throw aborted;
+  };
+  await assert.rejects(api.detectCodeLanguage('print(1)', controller.signal), err => err === aborted);
 });

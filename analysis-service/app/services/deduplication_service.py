@@ -20,7 +20,7 @@ def deduplicate_findings(findings: list[dict]) -> list[dict]:
             for v in finding.get("vulnerability_class", [])
         ]
 
-        is_secret = (
+        is_secret = finding.get("category") != "dependency_vulnerability" and (
             "secret" in " ".join(vuln_class)
             or "token" in rule_id
             or "pat" in rule_id

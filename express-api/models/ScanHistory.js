@@ -22,7 +22,7 @@ const ScanHistorySchema = new mongoose.Schema({
   },
   score: {
     type: Number,
-    required: true
+    default: null
   },
   language: {
     type: String,
@@ -81,6 +81,9 @@ const ScanHistorySchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  review_scope: String,
+  coverage: { type: mongoose.Schema.Types.Mixed, default: [] },
+  limitations: { type: [String], default: [] },
   commit_sha: {
     type: String,
     default: null

@@ -421,3 +421,19 @@
   border-radius: 8px;
   margin-bottom: 20px;
 }
+
+.analyze-header h1 { background: none; -webkit-text-fill-color: var(--text-primary); font-size: 2rem; font-weight: 600; margin: 20px 0 12px; }
+.privacy-bar { background: transparent; border: 0; border-bottom: 1px solid var(--border-color); border-radius: 0; padding: 18px 0; box-shadow: none; gap: 20px; flex-wrap: wrap; }
+.mode-tab-btn, .mode-tab-btn.active { box-shadow: none; border-radius: 8px; }
+.mode-tab-btn:hover { transform: none; }
+.mode-tab-btn.active { background: #202a38; border-color: #a6b8d4; }
+.scan-workspace-card { box-shadow: none; border-radius: 10px; }
+
+.visually-hidden-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.btn-remove-file { display: flex; align-items: center; margin-left: auto; background: transparent; border: 0; color: var(--text-secondary); padding: 8px; cursor: pointer; }
+.btn-remove-file:hover { color: var(--text-primary); }
+.language-detection-status { color: var(--text-secondary); font-size: .85rem; line-height: 1.5; }
+.editor-controls-bar { flex-wrap: wrap; gap: 14px; }
+.dropzone-icon { color: var(--text-secondary); }
+.dropzone-box.active { border-color: var(--accent-purple); background: var(--bg-card-hover); }
+.upload-limits { margin-top: 16px; margin-bottom: 0 !important; }

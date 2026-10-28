@@ -1,6 +1,6 @@
 import os
-import shutil
-import tempfile
+import re
+import subprocess
 try:
     import git
 except ImportError:
@@ -8,6 +8,18 @@ except ImportError:
 from typing import Any
 from pathlib import Path
 from pydantic import BaseModel, Field
+
+
+def validate_github_target(repo_url: str, branch: str | None = None, commit: str | None = None) -> str:
+    """Only public HTTPS GitHub repositories; never arbitrary URLs or server paths."""
+    match = re.fullmatch(r"https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", repo_url.strip())
+    if not match or match[2] in (".", ".."):
+        raise ValueError("Enter a public repository URL: https://github.com/owner/repository")
+    if branch and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,199}", branch) or ".." in branch or "//" in branch):
+        raise ValueError("Invalid branch name.")
+    if commit and not re.fullmatch(r"[0-9a-fA-F]{7,40}", commit):
+        raise ValueError("Commit must be a 7–40 character hexadecimal SHA.")
+    return f"https://github.com/{match[1]}/{match[2]}.git"
 
 DEPENDENCY_LOCKFILES = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "requirements.txt",
@@ -38,29 +50,39 @@ class GitDiffSummary(BaseModel):
 
 def clone_and_resolve_git(repo_url: str, target_commit: str | None = None, branch: str | None = None, dest_dir: str = "") -> tuple[Any, str, str | None]:
     """
-    Clones the target repository and checks out the specific commit or branch.
+    Clones the target repository without checkout and resolves the commit or branch.
     Returns (repo_obj, commit_sha, parent_sha).
     """
     if git is None:
         raise RuntimeError("GitPython is required for Git repository operations. Please install gitpython.")
 
-    clone_kwargs = {}
+    # Never check out untrusted files, initialize submodules, or run LFS filters.
+    # A shallow snapshot keeps history out of the review and bounds clone time.
+    repo_url = validate_github_target(repo_url, branch, target_commit)
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1",
+                   "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+    command = ["git", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "clone", "--depth=2", "--no-checkout", "--single-branch", "--no-tags"]
     if branch and not target_commit:
-        clone_kwargs["branch"] = branch
+        command += ["--branch", branch]
+    subprocess.run(command + ["--", repo_url, dest_dir], env=environment, capture_output=True, timeout=60, check=True)
+    repo = git.Repo(dest_dir)
 
-    # Isolated clone
-    repo = git.Repo.clone_from(repo_url, dest_dir, **clone_kwargs)
-
-    if target_commit:
-        repo.git.checkout(target_commit)
-    elif branch:
-        repo.git.checkout(branch)
-
-    head_commit = repo.head.commit
-    commit_sha = head_commit.hexsha
-    parent_sha = head_commit.parents[0].hexsha if head_commit.parents else None
-
-    return repo, commit_sha, parent_sha
+    try:
+        if target_commit:
+            if len(target_commit) != 40:
+                # Abbreviated SHAs must be present in the shallow clone.
+                resolved = repo.commit(target_commit).hexsha
+            else:
+                subprocess.run(["git", "-C", dest_dir, "fetch", "--depth=2", "origin", target_commit], env=environment, capture_output=True, timeout=30, check=True)
+                resolved = repo.commit(target_commit).hexsha
+            repo.git.update_ref("HEAD", resolved)
+        head_commit = repo.head.commit
+        commit_sha = head_commit.hexsha
+        parent_sha = head_commit.parents[0].hexsha if head_commit.parents else None
+        return repo, commit_sha, parent_sha
+    except Exception:
+        repo.close()
+        raise
 
 def analyze_git_diff(repo: Any, commit_sha: str, parent_sha: str | None) -> GitDiffSummary:
     """
@@ -106,6 +128,7 @@ def analyze_git_diff(repo: Any, commit_sha: str, parent_sha: str | None) -> GitD
     # Check total files in tree to determine ratio
     all_files = [item.path for item in commit.tree.traverse() if item.type == 'blob']
     total_files_count = len(all_files) or 1
+    total_changed = len(added) + len(modified) + len(renamed) + len(deleted)
     large_change_ratio = total_files_count >= 10 and (total_changed / total_files_count) > 0.30
 
     force_reason = None

@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Analysis-Token": "test-analysis-service-token-32-characters"})
 
 def test_root_endpoint():
     response = client.get("/")

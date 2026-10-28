@@ -13,18 +13,22 @@ export function UserProvider({ children }) {
     async function checkSession() {
       try {
         const user = await api.getCurrentUser();
-        if (user) {
-          setCurrentUser(user);
-          // Sync local history to backend upon initial load if authenticated
-          await api.syncLocalHistoryToBackend().catch(err => console.warn('Guest history sync failed:', err.message));
-        }
+        setCurrentUser(user || null);
+        if (!user) api.setLoggedInStatus(false);
       } catch (err) {
-        console.error('Session check failed:', err);
+        setError(err.message || 'Cannot check your session.');
       } finally {
         setLoading(false);
       }
     }
+    const expire = () => { api.setLoggedInStatus(false); setCurrentUser(null); };
+    window.addEventListener('reviewer:unauthorized', expire);
+    window.addEventListener('focus', checkSession);
     checkSession();
+    return () => {
+      window.removeEventListener('reviewer:unauthorized', expire);
+      window.removeEventListener('focus', checkSession);
+    };
   }, []);
 
   const login = async (username, password) => {
@@ -32,8 +36,6 @@ export function UserProvider({ children }) {
     try {
       const user = await api.login(username, password);
       setCurrentUser(user);
-      // Sync local history to backend after successful login
-      await api.syncLocalHistoryToBackend().catch(err => console.warn('Guest history sync failed:', err.message));
       return user;
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -46,8 +48,6 @@ export function UserProvider({ children }) {
     try {
       const user = await api.signup(username, email, password);
       setCurrentUser(user);
-      // Sync local history to backend after successful registration
-      await api.syncLocalHistoryToBackend().catch(err => console.warn('Guest history sync failed:', err.message));
       return user;
     } catch (err) {
       setError(err.message || 'Signup failed. Please try again.');
@@ -62,7 +62,7 @@ export function UserProvider({ children }) {
       setCurrentUser(null);
     } catch (err) {
       console.error('Logout error:', err);
-      setError('Failed to log out cleanly.');
+      setError(err.message || 'Failed to log out.');
       throw err;
     }
   };

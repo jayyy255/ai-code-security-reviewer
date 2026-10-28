@@ -1,24 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import '../services/editor';
+import { useTheme } from '../services/theme';
 import { 
   Play, 
   Code, 
-  Sparkles, 
   ShieldAlert, 
-  CheckCircle,
   UploadCloud,
   GitBranch,
   FileText,
-  FileCode,
-  ShieldCheck,
   Lock,
   EyeOff,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-react';
-import { analyzeCode, scanUploadedFiles, analyzeCommit } from '../services/api';
+import { analyzeCode, scanUploadedFiles, analyzeCommit, detectCodeLanguage } from '../services/api';
 import './AnalyzePage.css';
 
 const ALL_LANGUAGES = [
@@ -133,37 +131,44 @@ CMD ["node", "server.js"]
 };
 
 export default function AnalyzePage() {
+  const { theme } = useTheme();
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState('paste'); // 'paste' | 'upload' | 'github'
   const [ephemeral, setEphemeral] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [scanStep, setScanStep] = useState(1);
   const [error, setError] = useState(null);
 
   // Mode 1: Paste Code State
-  const [language, setLanguage] = useState('python');
+  const [language, setLanguage] = useState('auto');
+  const [detection, setDetection] = useState(null);
   const [code, setCode] = useState(PRESETS.python);
+  const activeDetection = detection?.code === code ? detection : null;
+  const editorLanguage = language === 'auto' ? activeDetection?.language || 'plaintext' : language;
+
+  useEffect(() => {
+    if (language !== 'auto' || activeMode !== 'paste' || !code.trim()) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const detected = await detectCodeLanguage(code.slice(0, 20000), controller.signal);
+        if (!controller.signal.aborted) setDetection({ ...detected, code });
+      } catch (err) {
+        if (!controller.signal.aborted) setDetection({ code, language: null, error: err.message });
+      }
+    }, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [code, language, activeMode]);
 
   // Mode 2: Upload Files State
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Mode 3: GitHub Repo State
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('');
   const [commitSha, setCommitSha] = useState('');
-  const [strategy, setStrategy] = useState('auto'); // 'auto' | 'full' | 'incremental'
-
-  // Loading animation simulation
-  useEffect(() => {
-    let interval;
-    if (loading) {
-      interval = setInterval(() => {
-        setScanStep(prev => (prev < 4 ? prev + 1 : 1));
-      }, 1200);
-    }
-    return () => clearInterval(interval);
-  }, [loading]);
+  const strategy = 'full';
 
   // Handle File Upload Drop
   const handleDrop = async (e) => {
@@ -178,6 +183,7 @@ export default function AnalyzePage() {
     if (e.target.files && e.target.files.length > 0) {
       await processUploadedFiles(e.target.files);
     }
+    e.target.value = '';
   };
 
   const processUploadedFiles = async (fileList) => {
@@ -206,7 +212,7 @@ export default function AnalyzePage() {
         if (!code.trim()) {
           throw new Error('Please enter or paste code before scanning.');
         }
-        result = await analyzeCode(code, language, `snippet.${language}`, ephemeral);
+        result = await analyzeCode(code, language === 'auto' ? null : language, 'snippet', ephemeral);
       } else if (activeMode === 'upload') {
         if (uploadedFiles.length === 0) {
           throw new Error('Please select or drag at least one file to scan.');
@@ -235,14 +241,9 @@ export default function AnalyzePage() {
       {/* Top Header */}
       <div className="analyze-header">
         <div className="header-titles">
-          <div className="badge-wrapper">
-            <span className="badge badge-primary">
-              <Sparkles size={14} className="sparkle-icon" /> Next-Gen Security Engine
-            </span>
-          </div>
-          <h1>Multi-Mode Code Security Scanner</h1>
+          <h1>Review your code</h1>
           <p className="subtitle">
-            Static AST analysis, 60+ security rules, secret scanning, honest malware engine reporting, and prompt-injection-hardened AI advisories.
+            Paste code or upload files to find security issues and review suggested fixes.
           </p>
         </div>
 
@@ -250,7 +251,7 @@ export default function AnalyzePage() {
         <div className="privacy-bar">
           <div className="privacy-left">
             <Lock size={16} className="text-safe" />
-            <span><strong>Privacy By Design:</strong> Isolated AI context • No full repository transfer • Minimal snippet footprint</span>
+            <span>Complete source is not stored in your history.</span>
           </div>
           <label className="ephemeral-toggle">
             <input 
@@ -259,7 +260,7 @@ export default function AnalyzePage() {
               onChange={(e) => setEphemeral(e.target.checked)} 
             />
             <span className="ephemeral-label">
-              <EyeOff size={14} /> Ephemeral Scan (Zero Vault Persistence)
+              <EyeOff size={14} /> Do not save this report
             </span>
           </label>
         </div>
@@ -269,34 +270,37 @@ export default function AnalyzePage() {
       <div className="mode-tabs-container">
         <button 
           className={`mode-tab-btn ${activeMode === 'paste' ? 'active' : ''}`}
+          aria-pressed={activeMode === 'paste'}
           onClick={() => setActiveMode('paste')}
         >
-          <Code size={18} />
+          <span className="mode-tab-icon"><Code size={19} /></span>
           <div>
-            <div className="mode-tab-title">1. Paste Code</div>
-            <div className="mode-tab-desc">Multi-language code snippets & prompts</div>
+            <div className="mode-tab-title">Paste code</div>
+            <div className="mode-tab-desc">Review a snippet</div>
           </div>
         </button>
 
         <button 
           className={`mode-tab-btn ${activeMode === 'upload' ? 'active' : ''}`}
+          aria-pressed={activeMode === 'upload'}
           onClick={() => setActiveMode('upload')}
         >
-          <UploadCloud size={18} />
+          <span className="mode-tab-icon"><UploadCloud size={19} /></span>
           <div>
-            <div className="mode-tab-title">2. Upload File / Archive</div>
-            <div className="mode-tab-desc">Source, Zip, Config, PDF & Docx</div>
+            <div className="mode-tab-title">Upload files</div>
+            <div className="mode-tab-desc">Files &amp; archives</div>
           </div>
         </button>
 
         <button 
           className={`mode-tab-btn ${activeMode === 'github' ? 'active' : ''}`}
+          aria-pressed={activeMode === 'github'}
           onClick={() => setActiveMode('github')}
         >
-          <GitBranch size={18} />
+          <span className="mode-tab-icon"><GitBranch size={19} /></span>
           <div>
-            <div className="mode-tab-title">3. GitHub Repo / Commit</div>
-            <div className="mode-tab-desc">Full snapshot or Smart Incremental diff</div>
+            <div className="mode-tab-title">Repository</div>
+            <div className="mode-tab-desc">Branch or commit</div>
           </div>
         </button>
       </div>
@@ -315,19 +319,21 @@ export default function AnalyzePage() {
           <div className="paste-mode-section animate-fade-in">
             <div className="editor-controls-bar">
               <div className="control-group">
-                <label htmlFor="language-select">Language Support:</label>
+                <label htmlFor="language-select">Language:</label>
                 <select 
                   id="language-select" 
                   value={language} 
                   onChange={(e) => setLanguage(e.target.value)}
                   className="select-input"
                 >
+                  <option value="auto">Auto-detect (recommended)</option>
                   {ALL_LANGUAGES.map(lang => (
                     <option key={lang.id} value={lang.id}>{lang.name}</option>
                   ))}
                 </select>
               </div>
 
+              {language === 'auto' && <span className="language-detection-status" role="status">{!code.trim() ? 'Paste code to detect its language.' : !activeDetection ? 'Detecting language…' : activeDetection.error || (activeDetection.language ? `Detected: ${ALL_LANGUAGES.find(item => item.id === activeDetection.language)?.name || activeDetection.language}${activeDetection.confidence === 'medium' ? ' (check the language or override it)' : ''}` : 'Language unclear. Select it manually before scanning.')}</span>}
               <div className="preset-links">
                 <span className="preset-label">Security Presets:</span>
                 {['python', 'javascript', 'java', 'go', 'dockerfile', 'terraform'].map(p => (
@@ -345,11 +351,11 @@ export default function AnalyzePage() {
 
             <div className="monaco-wrapper">
               <Editor
-                height="440px"
-                language={language === 'dockerfile' ? 'dockerfile' : language === 'terraform' ? 'hcl' : language}
+                height="clamp(300px, 52svh, 520px)"
+                language={editorLanguage === 'terraform' ? 'hcl' : editorLanguage === 'bash' ? 'shell' : editorLanguage}
                 value={code}
                 onChange={(value) => setCode(value || '')}
-                theme="vs-dark"
+                theme={theme === 'light' ? 'frosted-light' : 'frosted-carbon'}
                 options={{
                   minimap: { enabled: false },
                   fontSize: 14,
@@ -372,27 +378,16 @@ export default function AnalyzePage() {
               className={`dropzone-box ${dragActive ? 'active' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
               onDragLeave={() => setDragActive(false)}
-              onDrop={handleDrop}
+              onDrop={loading ? e => e.preventDefault() : handleDrop}
             >
               <UploadCloud size={48} className="dropzone-icon" />
               <h3>Drag & Drop Source Files or Archives</h3>
               <p>Supports .zip, .tar, source files (.py, .js, .java, .go, .c, .rs), config files (.yml, .json, .tf), and documents (.pdf, .docx)</p>
               
-              <label className="btn btn-secondary file-picker-label">
-                Browse Local Files
-                <input 
-                  type="file" 
-                  multiple 
-                  onChange={handleFileInput} 
-                  style={{ display: 'none' }} 
-                />
-              </label>
+              <input ref={fileInputRef} id="upload-files" type="file" multiple onChange={handleFileInput} className="visually-hidden-file-input" aria-label="Choose files to analyze" disabled={loading} />
+              <button type="button" className="btn btn-secondary file-picker-label" onClick={() => fileInputRef.current?.click()} disabled={loading}>Choose files</button>
+              <p className="upload-limits">Up to 50 files, 50 MB total. Archives are extracted safely; uploaded files are never executed.</p>
 
-              <div className="security-badges-row">
-                <span className="badge badge-info"><ShieldCheck size={12} /> Zip Bomb Limit (100:1 / 100MB)</span>
-                <span className="badge badge-info"><Lock size={12} /> Path Traversal Sanitized</span>
-                <span className="badge badge-info"><FileCode size={12} /> Non-executable Isolation</span>
-              </div>
             </div>
 
             {uploadedFiles.length > 0 && (
@@ -409,6 +404,7 @@ export default function AnalyzePage() {
                         <span className="file-item-name">{file.name}</span>
                         <span className="file-item-size">{(file.size / 1024).toFixed(1)} KB</span>
                       </div>
+                      <button type="button" className="btn-remove-file" aria-label={`Remove ${file.name}`} onClick={() => setUploadedFiles(previous => previous.filter((_, index) => index !== idx))} disabled={loading}><X size={16} /></button>
                     </div>
                   ))}
                 </div>
@@ -422,10 +418,10 @@ export default function AnalyzePage() {
           <div className="github-mode-section animate-fade-in">
             <div className="git-inputs-grid">
               <div className="git-input-field full-width">
-                <label>GitHub Repository URL *</label>
+                <label htmlFor="repository-url">GitHub Repository URL *</label>
                 <input 
                   type="text" 
-                  placeholder="https://github.com/owner/repository" 
+                  id="repository-url" placeholder="https://github.com/owner/repository"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
                   className="text-input"
@@ -433,10 +429,10 @@ export default function AnalyzePage() {
               </div>
 
               <div className="git-input-field">
-                <label>Branch (Optional)</label>
+                <label htmlFor="repository-branch">Branch (optional)</label>
                 <input 
                   type="text" 
-                  placeholder="e.g. main or feature/login" 
+                  id="repository-branch" placeholder="Default branch if omitted"
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
                   className="text-input"
@@ -444,34 +440,22 @@ export default function AnalyzePage() {
               </div>
 
               <div className="git-input-field">
-                <label>Target Commit SHA (Optional)</label>
+                <label htmlFor="repository-commit">Commit SHA (optional)</label>
                 <input 
                   type="text" 
-                  placeholder="e.g. 7a3f89e" 
+                  id="repository-commit" placeholder="Full SHA for an older commit"
                   value={commitSha}
                   onChange={(e) => setCommitSha(e.target.value)}
                   className="text-input"
                 />
               </div>
 
-              <div className="git-input-field full-width">
-                <label>Scanning Strategy</label>
-                <select 
-                  value={strategy} 
-                  onChange={(e) => setStrategy(e.target.value)}
-                  className="select-input"
-                >
-                  <option value="auto">Auto: Smart Incremental with Automatic Full Fallback (Recommended)</option>
-                  <option value="full">Full Snapshot: Complete Repository Scan</option>
-                  <option value="incremental">Incremental: Changed Files in Commit Only</option>
-                </select>
-              </div>
             </div>
 
             <div className="git-strategy-notice">
               <AlertTriangle size={16} className="text-warning" />
               <div>
-                <strong>Auto-Fallback Triggers:</strong> Full scans are automatically triggered if no previous baseline exists, if the commit is a merge commit, or if dependency lockfiles (e.g. <code>package-lock.json</code>, <code>requirements.txt</code>) or scanner security configs are modified.
+                <strong>Full repository review.</strong> Scans the latest commit on the default or selected branch, including existing issues. Checks source, secrets, infrastructure rules, workflow hazards and supported locked dependencies. Only package names and versions are sent to OSV for advisory lookup. No repository code is run. Private repositories are not supported.
               </div>
             </div>
           </div>
@@ -481,13 +465,13 @@ export default function AnalyzePage() {
         <div className="scan-action-footer">
           <div className="action-hint">
             <ShieldAlert size={16} className="text-accent" />
-            <span>Deterministic Semgrep & Gitleaks findings are strictly separated from AI advisory insights.</span>
+            <span>Findings come from scanners. Suggested fixes should be verified.</span>
           </div>
 
           <button 
             className="btn btn-primary run-scan-btn" 
             onClick={handleRunScan}
-            disabled={loading}
+            disabled={loading || (activeMode === 'upload' && uploadedFiles.length === 0)}
           >
             {loading ? (
               <>
@@ -497,7 +481,7 @@ export default function AnalyzePage() {
             ) : (
               <>
                 <Play size={18} fill="currentColor" />
-                Execute Security Review
+                {activeMode === 'upload' ? `Analyze ${uploadedFiles.length || ''} ${uploadedFiles.length === 1 ? 'file' : 'files'}` : activeMode === 'github' ? 'Review repository' : 'Analyze code'}
               </>
             )}
           </button>
@@ -507,21 +491,8 @@ export default function AnalyzePage() {
           <div className="scan-progress-overlay animate-fade-in">
             <div className="progress-content">
               <div className="progress-spinner"></div>
-              <h3>Analyzing Security Posture...</h3>
-              <div className="progress-steps-row">
-                <div className={`step-item ${scanStep >= 1 ? 'active' : ''}`}>
-                  <CheckCircle size={14} /> Ingestion & Prompt Defense
-                </div>
-                <div className={`step-item ${scanStep >= 2 ? 'active' : ''}`}>
-                  <CheckCircle size={14} /> Semgrep & Secret Rules
-                </div>
-                <div className={`step-item ${scanStep >= 3 ? 'active' : ''}`}>
-                  <CheckCircle size={14} /> Malware Status Engine
-                </div>
-                <div className={`step-item ${scanStep >= 4 ? 'active' : ''}`}>
-                  <CheckCircle size={14} /> AI Advisory Synthesis
-                </div>
-              </div>
+              <h3>{activeMode === 'upload' ? 'Scanning your files…' : activeMode === 'github' ? 'Reviewing the repository snapshot…' : 'Analyzing your code…'}</h3>
+              <p role="status">Running security scanners and preparing findings. Repositories and large archives can take a few minutes.</p>
             </div>
           </div>
         )}

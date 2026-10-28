@@ -1,22 +1,28 @@
+import { useRef, useState } from 'react';
 import { NavLink, Link } from 'react-router-dom';
-import { ShieldAlert, Sparkles, Code, History, User, LogOut } from 'lucide-react';
+import { ShieldAlert, Sparkles, Code, History, User, LogOut, Menu, X, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../components/UserContext';
+import { useTheme } from '../services/theme';
 
 export default function Navbar() {
-  const { currentUser, isAuthenticated, logout } = useAuth();
+  const { currentUser, isAuthenticated, logout, error } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuToggleRef = useRef(null);
 
   const handleLogout = async () => {
     try {
       await logout();
+      setMenuOpen(false);
     } catch (err) {
       console.error('Logout failed:', err);
     }
   };
 
   return (
-    <nav className="navbar">
+    <nav className="navbar" aria-label="Main navigation" onKeyDown={event => { if (event.key === 'Escape' && menuOpen) { setMenuOpen(false); menuToggleRef.current?.focus(); } }}>
       <div className="container nav-container">
-        <Link to="/" className="logo-link">
+        <Link to="/" className="logo-link" onClick={() => setMenuOpen(false)}>
           <div className="logo-icon-wrapper">
             <ShieldAlert size={22} className="logo-shield" />
             <Sparkles size={12} className="logo-sparkle" />
@@ -24,7 +30,15 @@ export default function Navbar() {
           <span className="logo-text">AI Code <span className="purple-text">Security Reviewer</span></span>
         </Link>
         
-        <div className="nav-links">
+        <div className="nav-appearance-controls">
+          <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
+            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+        <button ref={menuToggleRef} type="button" className="nav-menu-toggle" aria-expanded={menuOpen} aria-controls="main-navigation-links" aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'} onClick={() => setMenuOpen(open => !open)}>
+          {menuOpen ? <X size={22} /> : <Menu size={22} />}
+        </button>
+        </div>
+        <div id="main-navigation-links" className={`nav-links ${menuOpen ? 'is-open' : ''}`} onClick={event => { if (event.target.closest('a')) setMenuOpen(false); }}>
           <NavLink 
             to="/" 
             className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -84,6 +98,7 @@ export default function Navbar() {
           )}
         </div>
       </div>
+      {error && isAuthenticated && <p role="alert" className="container">{error}</p>}
     </nav>
   );
 }

@@ -606,3 +606,55 @@
   color: #94a3b8;
   height: 100%;
 }
+
+/* Findings take priority; supporting metadata stays collapsed. */
+.report-heading { margin: 28px 0; }
+.report-heading p { font-size: .75rem; letter-spacing: .12em; margin-bottom: 8px; }
+.report-heading h1 { font-size: 2rem; margin-bottom: 12px; }
+.report-heading span { color: var(--text-secondary); }
+.results-summary-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
+.malware-card { display: none; }
+.score-value-circle { border: 1px solid var(--border-color); border-radius: 12px; box-shadow: none; background: transparent; }
+.summary-card, .summary-card:hover { box-shadow: none; border-color: var(--border-color); }
+.metric-pill { background: transparent !important; border: 0 !important; }
+.metric-count, .metric-name { color: var(--text-primary) !important; }
+.coverage-details { border-bottom: 1px solid var(--border-color); padding: 16px 0; margin-bottom: 24px; color: var(--text-secondary); }
+.coverage-details summary { cursor: pointer; padding: 8px 0; }
+.filter-toolbar { background: transparent; padding: 0; margin: 28px 0; gap: 16px; flex-wrap: wrap; }
+.filter-group { flex-wrap: wrap; gap: 12px; }
+.finding-search { min-width: 230px; }
+.findings-explorer-layout { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.4fr); gap: 28px; align-items: start; }
+.findings-list-column { max-height: none; overflow: visible; }
+.finding-card { width: 100%; text-align: left; font-family: inherit; cursor: pointer; background: var(--bg-card) !important; border: 1px solid var(--border-color) !important; border-radius: 8px; padding: 20px; margin-bottom: 12px; box-shadow: none !important; }
+.finding-card.selected { border-color: #a6b8d4 !important; background: #202a38 !important; }
+.finding-card:hover { transform: none; }
+.finding-card:focus-visible, .filter-select:focus-visible { outline: 2px solid #a6b8d4; outline-offset: 3px; }
+.finding-title { line-height: 1.5; font-size: 1rem; margin: 14px 0; color: var(--text-primary); }
+.finding-card-meta { flex-wrap: wrap; overflow-wrap: anywhere; }
+.card-snippet-preview, .rule-meta { display: none; }
+.sev-tag, .tag-pill, .category-tag, .source-tag, .badge { background: transparent !important; border-color: var(--border-color) !important; }
+.sev-tag { font-size: .72rem; letter-spacing: .04em; }
+.inspector-card { padding: 28px; box-shadow: none; }
+.inspector-header h2 { font-size: 1.4rem; line-height: 1.5; margin: 18px 0; }
+.inspector-section { margin-top: 28px; }
+.inspector-text { line-height: 1.8; }
+.inspector-location { overflow-wrap: anywhere; }
+.tags-row { gap: 8px; }
+.fix-section, .problematic-section { background: transparent; border: 0; padding: 0; }
+.fix-header-title h3, .problematic-header h3, .problematic-code-text, .code-fix-block { color: var(--text-primary); }
+.problematic-code-box, .code-fix-block { border: 1px solid var(--border-color); padding: 18px; line-height: 1.7; }
+.problematic-code-box { display: block; }
+.line-indicator { background: transparent; color: var(--text-secondary); display: block; margin-bottom: 12px; }
+@media (max-width: 900px) { .findings-explorer-layout, .results-summary-grid { grid-template-columns: 1fr; } .results-top-bar { flex-wrap: wrap; gap: 16px; } .inspector-card { padding: 20px; } .filter-select { max-width: 100%; } }
+
+.results-container { padding-top: 24px; }
+.results-top-bar { margin-bottom: 16px; }
+.report-heading { margin: 18px 0; }
+.report-heading h1 { font-size: 1.7rem; margin-bottom: 8px; }
+.summary-card { padding: 16px; }
+.score-value-circle { width: 64px; height: 64px; flex-shrink: 0; }
+.coverage-details { padding: 8px 0; margin-bottom: 16px; }
+.filter-toolbar { margin: 16px 0; }
+.findings-list-column { display: block; max-height: 72vh; overflow-y: auto; padding-right: 6px; }
+.finding-inspector-column { min-width: 0; position: sticky; top: 20px; }
+@media (max-width: 900px) { .findings-list-column { max-height: none; } .finding-inspector-column { position: static; } }

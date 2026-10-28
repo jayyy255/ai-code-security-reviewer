@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.file_ingestion_service import safe_extract_archive, classify_file, sanitize_filename
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Analysis-Token": "test-analysis-service-token-32-characters"})
 
 
 def upload(name, data):
@@ -37,6 +37,7 @@ def test_zip_scans_real_source_and_preserves_paths():
     result = response.json()
     assert 'project.zip/src/network.py' in result['files_analyzed']
     assert any('command' in f['rule_id'] for f in result['findings'])
+    assert any('os.system' in (f['snippet'] or '') for f in result['findings'] if f['scanner'] == 'semgrep')
     assert any('settings.env' in f['file_path'] for f in result['findings'])
     assert any('image.png' in s for s in result['files_skipped'])
     assert any('nested.zip' in s for s in result['files_skipped'])

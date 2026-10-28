@@ -8,8 +8,6 @@ INJECTION_PATTERNS = [
     (r"(?i)\b(mark|classify|report)\s+(as\s+)?(clean|safe|secure|0\s+vulnerabilities|no\s+findings)\b", "Security Reporting Manipulation Attempt", "HIGH"),
     (r"(?i)\bbypass\s+(all\s+)?(security|vulnerability|malware)\s+(scanners?|checks?|filters?)\b", "Scanner Bypass Directive", "HIGH"),
     (r"(?i)\bexfiltrate\s+(data|secrets|env|keys)\s+to\b", "Data Exfiltration Directive", "CRITICAL"),
-    (r"(?i)\beval\s*\(\s*base64_decode\b", "Obfuscated Dynamic Execution Payload", "HIGH"),
-    (r"(?i)\b(rm\s+-rf\s+\/|format\s+c:|del\s+\/f\s+\/s\s+\/q)\b", "Destructive Command Injection Pattern", "CRITICAL"),
 ]
 
 def scan_for_prompt_injection(content: str, file_path: str = "snippet") -> list[dict]:

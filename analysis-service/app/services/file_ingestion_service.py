@@ -245,8 +245,7 @@ def safe_temp_workspace():
     Context manager creating an isolated temporary workspace with guaranteed cleanup.
     Never executes or installs scripts inside the temp folder.
     """
-    temp_dir = tempfile.mkdtemp(prefix="sec_scan_")
-    try:
+    # TemporaryDirectory retries read-only Git objects on Windows; silently
+    # ignoring rmtree errors could leave repository contents behind.
+    with tempfile.TemporaryDirectory(prefix="sec_scan_") as temp_dir:
         yield temp_dir
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)

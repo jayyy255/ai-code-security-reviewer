@@ -8,6 +8,10 @@ const morgan = require('morgan');
 const helmet = require('helmet');
 const axios = require('axios');
 const multer = require('multer');
+const { createClient } = require('redis');
+const { RedisStore } = require('connect-redis');
+const { rateLimit } = require('express-rate-limit');
+const crypto = require('node:crypto');
 
 const User = require('./models/User');
 const ScanHistory = require('./models/ScanHistory');
@@ -18,13 +22,17 @@ const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-security-reviewer';
 const rawFastApi = process.env.FASTAPI_URL || 'http://localhost:8000';
 const FASTAPI_URL = (rawFastApi.startsWith('http://') || rawFastApi.startsWith('https://')) ? rawFastApi : `https://${rawFastApi}`;
-const FRONTEND_URL = process.env.FRONTEND_URL || true;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const serviceToken = process.env.ANALYSIS_SERVICE_TOKEN;
+if (!serviceToken || serviceToken.length < 32) throw new Error('Set ANALYSIS_SERVICE_TOKEN to a shared random secret of at least 32 characters.');
+if (process.env.NODE_ENV === 'production' && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) throw new Error('Set a strong SESSION_SECRET.');
+const analysisClient = axios.create({ headers: { 'X-Analysis-Token': serviceToken }, timeout: 180000 });
 axios.defaults.timeout = 180000;
 
 // Connect to MongoDB
 mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
   .then(() => console.log('Connected to MongoDB successfully'))
-  .catch(() => console.warn('MongoDB unavailable: account and vault endpoints will return 503. Guest scans remain available.'));
+  .catch(() => console.warn('MongoDB unavailable: account and vault endpoints will return 503. Authenticated scanning is unavailable until MongoDB reconnects.'));
 mongoose.set('bufferCommands', false);
 
 // Multer memory storage for safe file intake (max 50MB)
@@ -44,17 +52,26 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // creates an unauthenticated application or an unhandled rejected promise.
 const sessionClient = mongoose.connection.asPromise().then(connection => connection.getClient());
 sessionClient.catch(() => {});
-const sessionStore = MongoStore.create({
+let sessionStore;
+let redisClient;
+if (process.env.REDIS_URL) {
+  redisClient = createClient({ url: process.env.REDIS_URL, socket: { connectTimeout: 5000 }, disableOfflineQueue: true });
+  redisClient.on('error', () => console.warn('Redis session storage unavailable.'));
+  redisClient.connect().catch(() => {});
+  sessionStore = new RedisStore({ client: redisClient, prefix: 'reviewer:session:', ttl: 14 * 24 * 60 * 60 });
+} else {
+  sessionStore = MongoStore.create({
   clientPromise: sessionClient,
   collectionName: 'sessions',
   ttl: 14 * 24 * 60 * 60,
   autoRemove: 'native',
 });
 sessionStore.collectionP.catch(() => {});
+}
 sessionStore.on('error', () => console.warn('Session storage unavailable.'));
 const sessionMiddleware = session({
   name: 'reviewer.sid',
-  secret: process.env.SESSION_SECRET || 'reviewer-session-secret-key-1337',
+  secret: process.env.SESSION_SECRET || crypto.randomBytes(48).toString('hex'),
   resave: false,
   saveUninitialized: false,
   store: sessionStore,
@@ -66,22 +83,39 @@ const sessionMiddleware = session({
   },
 });
 app.use((req, res, next) => {
-  if (mongoose.connection.readyState !== 1) return next();
+  if (req.path === '/health' || req.path === '/') return next();
+  if (mongoose.connection.readyState !== 1 || (redisClient && !redisClient.isReady)) return res.status(503).json({ error: 'Account or session storage is unavailable. Please retry shortly.' });
   sessionMiddleware(req, res, next);
 });
 
+// Reject cross-site browser mutations before session-backed actions.
+app.use((req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    if (req.headers['sec-fetch-site'] === 'cross-site' || (req.headers.origin && req.headers.origin !== FRONTEND_URL)) return res.status(403).json({ error: 'Request origin is not permitted.' });
+  }
+  next();
+});
+app.use('/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Too many login attempts. Please try again later.' } }));
+
 // Auth Middleware
-const requireAuth = (req, res, next) => {
+const requireAuth = async (req, res, next) => {
   if (!req.session || !req.session.userId) {
     return res.status(401).json({ error: 'Unauthorized. Please log in.' });
   }
-  next();
+  try {
+    if (!await User.exists({ _id: req.session.userId })) {
+      await new Promise((resolve, reject) => req.session.destroy(err => err ? reject(err) : resolve()));
+      return res.status(401).json({ error: 'Your account session is no longer valid. Please log in.' });
+    }
+    next();
+  } catch (err) { next(err); }
 };
 
 app.get('/health', async (req, res) => {
   try {
     const analysis = await axios.get(`${FASTAPI_URL}/health/`, { timeout: 5000 });
-    res.json({ status: 'ready', database: mongoose.connection.readyState === 1, analysis: analysis.data });
+    const ready = mongoose.connection.readyState === 1 && (!redisClient || redisClient.isReady);
+    res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'unavailable', database: mongoose.connection.readyState === 1, sessions: redisClient ? redisClient.isReady : mongoose.connection.readyState === 1, analysis: analysis.data });
   } catch {
     res.status(503).json({ status: 'unavailable', error: 'Analysis engine is not reachable.' });
   }
@@ -106,7 +140,7 @@ async function persistScanResult(userId, scanResult, ephemeral = false) {
       user: userId,
       analysis_id: scanResult.analysis_id,
       scan_type: scanResult.scan_type || 'paste',
-      score: scanResult.summary?.security_score ?? 100,
+      score: scanResult.summary?.security_score ?? null,
       language: scanResult.language || 'auto',
       critical: scanResult.summary?.critical ?? 0,
       high: scanResult.summary?.high ?? 0,
@@ -121,6 +155,9 @@ async function persistScanResult(userId, scanResult, ephemeral = false) {
       malware_status: scanResult.malware_status || null,
       privacy_metadata: scanResult.privacy_metadata || {},
       repository_url: scanResult.repository_url || null,
+      review_scope: scanResult.review_scope || null,
+      coverage: scanResult.coverage || [],
+      limitations: scanResult.limitations || [],
       commit_sha: scanResult.commit_sha || null,
       parent_sha: scanResult.parent_sha || null,
       changed_files: scanResult.changed_files || {},
@@ -213,17 +250,12 @@ app.post('/auth/logout', (req, res) => {
   if (req.session) {
     req.session.destroy(err => {
       if (err) return res.status(500).json({ error: 'Failed to log out' });
-      res.clearCookie('reviewer.sid');
+      res.clearCookie('reviewer.sid', { path: '/', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: process.env.COOKIE_SAMESITE || 'lax' });
       res.json({ success: true, message: 'Logged out successfully' });
     });
   } else {
     res.json({ success: true, message: 'Logged out successfully' });
   }
-});
-
-// Health check endpoint for Render / monitoring
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'express-api', time: new Date().toISOString() });
 });
 
 app.get('/', (req, res) => {
@@ -247,7 +279,7 @@ const handleSingleScan = async (req, res) => {
       return res.status(400).json({ error: 'Code is required for analysis.' });
     }
 
-    const response = await axios.post(`${FASTAPI_URL}/api/v1/files/scan`, {
+    const response = await analysisClient.post(`${FASTAPI_URL}/api/v1/files/scan`, {
       code,
       language: language || null,
       file_name: file_name || 'snippet',
@@ -264,11 +296,21 @@ const handleSingleScan = async (req, res) => {
   }
 };
 
-app.post('/analyze', handleSingleScan);
-app.post('/api/v1/files/scan', handleSingleScan);
+app.post('/analyze', requireAuth, handleSingleScan);
+app.post('/api/v1/files/scan', requireAuth, handleSingleScan);
+
+app.post('/api/v1/language/detect', requireAuth, async (req, res) => {
+  try {
+    const response = await analysisClient.post(`${FASTAPI_URL}/api/v1/language/detect`, { code: req.body.code, file_name: req.body.file_name || 'snippet' });
+    res.json(response.data);
+  } catch (err) {
+    if (err.response) return res.status(err.response.status).json(err.response.data);
+    res.status(502).json({ error: 'Language detection service is unavailable. Select a language manually.' });
+  }
+});
 
 // MODE 2: POST /api/v1/files/scan-batch (File Upload / Batch / Archives)
-app.post('/api/v1/files/scan-batch', upload.array('files', 50), async (req, res) => {
+app.post('/api/v1/files/scan-batch', requireAuth, upload.array('files', 50), async (req, res) => {
   try {
     let filesPayload = [];
 
@@ -293,7 +335,7 @@ app.post('/api/v1/files/scan-batch', upload.array('files', 50), async (req, res)
 
     const ephemeral = req.body.ephemeral === 'true' || req.body.ephemeral === true;
 
-    const response = await axios.post(`${FASTAPI_URL}/api/v1/files/scan-batch`, {
+    const response = await analysisClient.post(`${FASTAPI_URL}/api/v1/files/scan-batch`, {
       files: filesPayload,
       ephemeral
     });
@@ -303,13 +345,14 @@ app.post('/api/v1/files/scan-batch', upload.array('files', 50), async (req, res)
     res.json(scanResult);
   } catch (err) {
     console.error('Batch scan proxy error:', err.message);
+    if (err instanceof SyntaxError) return res.status(400).json({ error: 'Invalid JSON in files payload.' });
     if (err.response) return res.status(err.response.status).json(err.response.data);
     res.status(502).json({ error: 'Failed to communicate with FastAPI analysis service for batch scan.' });
   }
 });
 
 // MODE 3: POST /api/v1/commits/analyze (GitHub Repo / Commit)
-app.post('/api/v1/commits/analyze', async (req, res) => {
+app.post('/api/v1/commits/analyze', requireAuth, async (req, res) => {
   try {
     const { repository_url, commit_sha, branch, strategy, baseline_findings, ephemeral } = req.body;
 
@@ -317,14 +360,14 @@ app.post('/api/v1/commits/analyze', async (req, res) => {
       return res.status(400).json({ error: 'Repository URL is required.' });
     }
 
-    const response = await axios.post(`${FASTAPI_URL}/api/v1/commits/analyze`, {
+    const response = await analysisClient.post(`${FASTAPI_URL}/api/v1/commits/analyze`, {
       repository_url,
       commit_sha: commit_sha || null,
       branch: branch || null,
-      strategy: strategy || 'auto',
-      baseline_findings: baseline_findings || [],
+      strategy: 'full',
+      baseline_findings: [],
       ephemeral: Boolean(ephemeral)
-    });
+    }, { timeout: 300000 });
 
     const scanResult = response.data;
     await persistScanResult(req.session?.userId, scanResult, Boolean(ephemeral));
@@ -376,26 +419,9 @@ app.get('/history', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/history', requireAuth, async (req, res) => {
-  try {
-    if (req.body.privacy_metadata?.ephemeral_scan || req.body.is_demo) {
-      return res.status(400).json({ error: 'Ephemeral and demo reports cannot be persisted.' });
-    }
-    const existing = await ScanHistory.findOne({ analysis_id: req.body.analysis_id, user: req.session.userId });
-    if (existing) return res.json(existing);
-
-    const historyItem = new ScanHistory({
-      ...req.body,
-      code: undefined,
-      score: req.body.summary?.security_score ?? req.body.score,
-      user: req.session.userId
-    });
-    await historyItem.save();
-    res.status(201).json(historyItem);
-  } catch (err) {
-    console.error('Error saving history record:', err);
-    res.status(500).json({ error: 'Failed to save scan record' });
-  }
+// Reports are created only by verified scans; client imports cannot forge ownership or overwrite IDs.
+app.post('/history', requireAuth, (req, res) => {
+  res.status(405).json({ error: 'Report imports are disabled. Run a new analysis to save a verified report.' });
 });
 
 app.delete('/history/:analysis_id', requireAuth, async (req, res) => {
@@ -427,7 +453,7 @@ app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     return res.status(413).json({ error: `Upload rejected: ${err.message}` });
   }
-  if (err instanceof SyntaxError && err.status === 400) {
+  if (err instanceof SyntaxError) {
     return res.status(400).json({ error: 'Invalid JSON payload.' });
   }
   if (err.type === 'entity.too.large') {

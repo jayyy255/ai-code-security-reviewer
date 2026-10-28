@@ -31,6 +31,8 @@ export default function ResultsPage() {
   const [filterSource, setFilterSource] = useState('ALL');
   const [selectedFile, setSelectedFile] = useState('ALL');
   const [commitTab, setCommitTab] = useState('ALL'); // 'ALL' | 'NEW' | 'FIXED' | 'PERSISTENT'
+  const [loadError, setLoadError] = useState('');
+  const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -40,19 +42,22 @@ export default function ResultsPage() {
       try {
         const data = await getAnalysisResult(analysisId);
         if (!active) return;
-        if (!data) { navigate('/analyze'); return; }
+        if (!data) { setLoadError({ id: analysisId, message: 'Report not found or no longer available.' }); return; }
         setResult(data);
+        setLoadError('');
         setSelectedFinding(data.findings?.[0] || null);
       } catch (err) {
         console.error('Error loading scan result:', err);
-        if (active) navigate('/analyze');
+        if (active) setLoadError({ id: analysisId, message: err.message || 'Could not load this report.' });
       }
     }
     loadResult();
     return () => { active = false; };
   }, [analysisId, sessionLoading, currentUser, navigate]);
 
-  if (!result) {
+  if (loadError?.id === analysisId) return <div className="container results-container" role="alert"><h1>Report unavailable</h1><p>{loadError.message}</p><Link to="/history" className="btn btn-secondary">Back to history</Link></div>;
+
+  if (!result || result.analysis_id !== analysisId) {
     return (
       <div className="container" style={{ padding: '80px 24px', textAlign: 'center' }}>
         <p>Loading security audit report...</p>
@@ -61,7 +66,7 @@ export default function ResultsPage() {
   }
 
   const { summary, findings = [], malware_status, scanner_status = [], privacy_metadata = {} } = result;
-  const score = Math.round(summary.security_score ?? 100);
+  const score = summary.security_score == null ? null : Math.round(summary.security_score);
 
   // Group findings by file
   const filesList = Array.from(new Set(findings.map(f => f.file_path || 'snippet')));
@@ -79,7 +84,8 @@ export default function ResultsPage() {
     const matchSev = filterSeverity === 'ALL' || (f.severity && f.severity.toUpperCase() === filterSeverity.toUpperCase());
     const matchSource = filterSource === 'ALL' || (f.source && f.source.toLowerCase() === filterSource.toLowerCase());
     const matchFile = selectedFile === 'ALL' || f.file_path === selectedFile;
-    return matchSev && matchSource && matchFile;
+    const matchQuery = !query || [f.message, f.file_path, f.rule_id, f.explanation].join(' ').toLowerCase().includes(query.toLowerCase());
+    return matchSev && matchSource && matchFile && matchQuery;
   });
 
   const selectedFinding = filteredFindings.includes(chosenFinding) ? chosenFinding : filteredFindings[0] || null;
@@ -106,7 +112,13 @@ export default function ResultsPage() {
 Analysis ID: ${result.analysis_id}
 Date: ${new Date().toISOString()}
 Scan Mode: ${result.scan_type}
-Security Score: ${score}/100
+Security Score: ${score == null ? 'Unavailable' : `${score}/100`} (${summary.score_status || 'assessed'})
+Repository: ${result.repository_url || 'N/A'}
+Commit: ${result.commit_sha || 'N/A'}
+Scope: ${result.review_scope || result.scan_type}
+Scoring: ${summary.score_explanation || 'Legacy report'}
+Coverage: ${(result.coverage || []).map(check => `${check.scanner_name}: ${check.status} — ${check.status_message}`).join('\n')}
+Limitations: ${(result.limitations || []).join('\n')}
 
 ## Summary Metrics
 - Critical: ${summary.critical}
@@ -172,16 +184,18 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
         </div>
       )}
 
+      <header className="report-heading"><p>SECURITY REVIEW</p><h1>Analysis results</h1><span>{findings.length} findings · {result.files_analyzed?.length || 0} {result.files_analyzed?.length === 1 ? 'file' : 'files'} analyzed</span></header>
+      {result.repository_url && <p className="repository-scope">{result.repository_url} · Full snapshot at {result.commit_sha?.slice(0, 8)}</p>}
       {/* Summary Score Dashboard */}
       <div className="results-summary-grid">
         <div className="summary-card score-card">
-          <div className="score-value-circle" style={{ borderColor: score >= 80 ? 'var(--status-safe)' : score >= 60 ? 'var(--severity-medium)' : 'var(--severity-critical)' }}>
-            <span className="score-number">{score}</span>
-            <span className="score-label">/ 100</span>
+          <div className="score-value-circle">
+            <span className="score-number">{score ?? '—'}</span>
+            <span className="score-label">{score == null ? 'unavailable' : '/ 100'}</span>
           </div>
           <div className="score-text">
-            <h3>Static Analysis Score</h3>
-            <p>{!result.files_analyzed?.length ? 'No files eligible for static analysis' : findings.length === 0 ? 'No issues detected by the configured rules' : score >= 80 ? 'Review the findings below' : score >= 60 ? 'Moderate Risks Detected' : 'Action Required: High Exposure'}</p>
+            <h3>Security review score{summary.score_status === 'provisional' ? ' · Provisional' : ''}</h3>
+            <p>{score == null ? 'Incomplete core checks — review coverage below' : summary.score_status === 'provisional' ? 'Coverage is incomplete. This score is capped at 79.' : !result.files_analyzed?.length ? 'No files eligible for static analysis' : findings.length === 0 ? 'No issues detected by the configured checks' : score >= 80 ? 'Review the findings below' : score >= 60 ? 'Moderate risks detected' : 'Prioritize the highest-severity findings'}</p>
           </div>
         </div>
 
@@ -219,16 +233,20 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
         </div>
       </div>
 
-      <div className="card" style={{ padding: '16px', marginBottom: '20px' }}>
-        <strong>Scan coverage & privacy</strong>
+      <details className="coverage-details">
+        <summary>Scan coverage, engine status & privacy</summary>
+        <p>Malware check: {malwareBadge.label.toLowerCase()} — {malware_status?.details || 'Not invoked for this scan.'}</p>
         <p>{result.files_analyzed?.length || 0} files analyzed; {result.files_skipped?.length || 0} files skipped. Static scores cannot establish that code is safe.</p>
+        {result.review_scope && <p>{result.review_scope}</p>}
+        {result.limitations?.map((limitation, index) => <p key={index}>{limitation}</p>)}
         {scanner_status.map(scanner => (
-          <p key={scanner.scanner_name}>{scanner.scanner_name}: {scanner.status_message} ({scanner.rules_loaded} rules)</p>
+          <p key={scanner.scanner_name}><strong>{scanner.scanner_name}: {scanner.status || 'completed'}</strong> — {scanner.status_message}{scanner.rules_loaded > 0 ? ` (${scanner.rules_loaded} rules)` : ''}</p>
         ))}
         <p>{privacy_metadata.ephemeral_scan ? 'Ephemeral: this report is not saved.' : 'Findings and snippets are saved; complete source code is not stored.'}</p>
         {result.files_skipped?.length > 0 && <ul>{result.files_skipped.map((file, i) => <li key={i}>{file}</li>)}</ul>}
         {result.persistence_warning && <p role="alert">{result.persistence_warning}</p>}
-      </div>
+      </details>
+      <details className="coverage-details"><summary>How the score is calculated</summary><p>{summary.score_explanation || 'This report uses an older scoring method.'}</p><p>This is a prioritization aid, not a percentage chance that the application is secure.</p></details>
 
       {/* Commit Diff Navigation (If Commit Scan) */}
       {(result.scan_type === 'commit' || result.scan_type === 'incremental' || result.commit_sha) && (
@@ -240,7 +258,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
             <span className="badge badge-info">{result.scan_type.toUpperCase()} SCAN</span>
           </div>
 
-          <div className="commit-tabs">
+          {result.new_findings?.length + result.fixed_findings?.length + result.persistent_findings?.length > 0 && <div className="commit-tabs">
             <button className={`tab-btn ${commitTab === 'ALL' ? 'active' : ''}`} onClick={() => setCommitTab('ALL')}>
               All Findings ({findings.length})
             </button>
@@ -253,17 +271,18 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
             <button className={`tab-btn ${commitTab === 'PERSISTENT' ? 'active' : ''}`} onClick={() => setCommitTab('PERSISTENT')}>
               Persistent (={result.persistent_findings?.length || 0})
             </button>
-          </div>
+          </div>}
         </div>
       )}
 
       {/* Filter Toolbar */}
       <div className="filter-toolbar">
         <div className="filter-group">
+          <input aria-label="Search findings" className="filter-select finding-search" placeholder="Search findings or files…" value={query} onChange={e => setQuery(e.target.value)} />
           <ListFilter size={16} className="text-muted" />
           <span className="filter-title">Filter by:</span>
 
-          <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} className="filter-select">
+          <select aria-label="Severity" value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} className="filter-select">
             <option value="ALL">All Severities</option>
             <option value="CRITICAL">Critical Only</option>
             <option value="HIGH">High Only</option>
@@ -271,16 +290,20 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
             <option value="LOW">Low Only</option>
           </select>
 
-          <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="filter-select">
+          <select aria-label="Scanner" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="filter-select">
             <option value="ALL">All Sources</option>
             <option value="semgrep">Semgrep AST Rules</option>
             <option value="gitleaks">Gitleaks Secret Scanner</option>
             <option value="prompt_injection_guard">Prompt Injection Guard</option>
+            <option value="gitleaks_pattern_engine">Secret fallback patterns</option>
+            <option value="osv">Dependency advisories</option>
+            <option value="repository_config">Repository configuration</option>
+            <option value="clamav">Malware</option>
 
           </select>
 
           {filesList.length > 1 && (
-            <select value={selectedFile} onChange={(e) => setSelectedFile(e.target.value)} className="filter-select">
+            <select aria-label="File" value={selectedFile} onChange={(e) => setSelectedFile(e.target.value)} className="filter-select">
               <option value="ALL">All Files ({filesList.length})</option>
               {filesList.map(f => (
                 <option key={f} value={f}>{f}</option>
@@ -310,7 +333,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
               const sevClass = (finding.severity || 'low').toLowerCase();
 
               return (
-                <div 
+                <button type="button" aria-pressed={isSelected}
                   key={idx} 
                   className={`finding-card ${sevClass} ${isSelected ? 'selected' : ''}`}
                   onClick={() => setSelectedFinding(finding)}
@@ -330,7 +353,7 @@ ${(f.remediation || []).map(r => `  - ${r}`).join('\n')}
                     <span className="file-meta"><FileCode size={13} /> {finding.file_path}:{finding.line || '1'}</span>
                     <span className="rule-meta"><code>{finding.rule_id}</code></span>
                   </div>
-                </div>
+                </button>
               );
             })
           )}

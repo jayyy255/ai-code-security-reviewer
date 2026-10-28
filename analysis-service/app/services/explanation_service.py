@@ -18,6 +18,33 @@ def generate_local_fallback_explanation(finding: dict) -> dict:
     category = finding.get("category", "security").lower()
     line = finding.get("line", 1)
 
+    # Rule-specific guidance remains useful when the optional AI service is offline.
+    guidance = [
+        (("md5", "sha1", "weak-password", "password-hash"),
+         "Fast or outdated password hashing makes stolen hashes cheaper to crack offline.",
+         "An attacker with database access can recover weak passwords and reuse them against accounts.",
+         ["Use Argon2id, bcrypt, or a properly configured PBKDF2 password-hashing library with a unique salt per password.", "Migrate existing hashes when users next sign in and require resets for exposed credentials."]),
+        (("dockerfile-running-as-root",),
+         "The container explicitly runs as root, increasing the impact of a compromised application.",
+         "An exploited process may modify more container files and misuse mounted resources.",
+         ["Create an unprivileged runtime user and set USER in the final image stage.", "Give the user only the directories it needs; avoid privileged mode and unnecessary Linux capabilities."]),
+        (("terraform-open-security-group",),
+         "The ingress rule permits traffic from every IPv4 address. Exposure depends on the selected ports and service authentication.",
+         "Unintended services may be reachable from the public Internet.",
+         ["Restrict source CIDRs or reference the security group of the intended caller.", "Keep administrative ports private and verify the deployed ingress and authentication settings."]),
+        (("eval", "dynamic-execution"),
+         "Dynamic evaluation treats data as executable code. Verify whether untrusted input can reach this call.",
+         "Reachable attacker-controlled expressions can execute with the application's privileges.",
+         ["Replace dynamic evaluation with a parser or an explicit allowlist of supported operations.", "Treat external input as data and add tests that reject executable expressions."]),
+        (("cors",),
+         "The rule flags a permissive cross-origin policy; verify the allowed origins and credential behavior together.",
+         "An unintended website may read sensitive responses when cross-origin credentials are also permitted.",
+         ["Allow only exact trusted frontend origins and avoid reflecting arbitrary Origin headers.", "Enable credentialed requests only where necessary and test that untrusted origins cannot read responses."]),
+    ]
+    for identifiers, explanation, risk, remediation in guidance:
+        if any(identifier in rule_id for identifier in identifiers):
+            return {"rule_id": finding.get("rule_id"), "explanation": explanation, "risk": risk, "remediation": remediation, "fixed_code": None}
+
     # 1. SQL Injection
     if "sql" in rule_id or "sql" in msg.lower():
         return {

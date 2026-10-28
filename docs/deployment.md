@@ -1,5 +1,7 @@
 # Render and Railway deployment
 
+Use Render alone or Railway alone; you do not need both. Keep the existing MongoDB Atlas database. For Redis-backed sessions, add a Redis/Render Key Value instance in the same region.
+
 Create three Docker services from this repository. Set each service's root
 directory to the folder below; its Dockerfile is `Dockerfile` relative to that
 root. Leave build/start overrides empty. Do not deploy the repository root as a
@@ -13,6 +15,11 @@ single Node/Python service.
 
 The analysis image installs Semgrep, Gitleaks, and ClamAV. A native Python
 deployment without these OS packages does not provide the same scanner coverage.
+
+Repository reviews also require outbound HTTPS to GitHub and `api.osv.dev`.
+No GitHub or OSV secret is needed for public repository reviews. The gateway and
+bundled frontend proxy allow up to 300 seconds for a repository scan; configure
+any additional proxy to permit that duration. See [review scope and scoring](repository-reviews.md).
 
 ## Environment variables
 
@@ -38,6 +45,8 @@ FASTAPI_URL=https://YOUR-ANALYSIS-DOMAIN
 FRONTEND_URL=https://YOUR-FRONTEND-DOMAIN
 SESSION_SECRET=REPLACE-WITH-A-LONG-RANDOM-SECRET
 TRUST_PROXY=1
+ANALYSIS_SERVICE_TOKEN=SHARED-RANDOM-SECRET-32-CHARACTERS-MINIMUM
+REDIS_URL=YOUR-PRIVATE-REDIS-CONNECTION-URL
 ```
 
 Use a persistent MongoDB database (Atlas, or a Railway MongoDB service with a
@@ -50,13 +59,13 @@ production login cookies work. The production frontend must use HTTPS.
 
 ```dotenv
 PORT=8000
+ANALYSIS_SERVICE_TOKEN=SAME-VALUE-AS-GATEWAY
 GEMINI_API_KEY=YOUR-OPTIONAL-GEMINI-KEY
 ```
 
 Without `GEMINI_API_KEY`, scanners and grounded local explanations still work;
 the UI labels local suggestions separately from AI advisories. AI calls have a
-20-second timeout. Redis is not used by the current request pipeline and is not
-required.
+20-second timeout. The gateway uses Redis for server-side sessions when REDIS_URL is set. Logout deletes the stored session, so replaying its old cookie fails. Without REDIS_URL, local development falls back to MongoDB sessions, which also invalidate on logout. A configured but unavailable Redis never falls back silently.
 
 ClamAV needs current signature databases as well as its executable. Populate and
 refresh its database with `freshclam` in the deployed scanner environment (use
@@ -101,8 +110,8 @@ use the actual variable name shown by your template.
 2. Deploy the gateway with `MONGODB_URI` and `FASTAPI_URL`.
 3. Deploy the frontend with `API_GATEWAY_URL`.
 4. Set the gateway's `FRONTEND_URL` to the final frontend HTTPS origin.
-5. Visit the frontend, scan a deliberately vulnerable snippet, create a test
-   account, run a saved scan, and reopen it from History. Check that an ephemeral
+5. Visit the frontend, confirm that analysis redirects to login, create a test
+   account, scan a deliberately vulnerable snippet, and reopen it from History. Check that an ephemeral
    scan does not appear there. Upload a ZIP containing source code to confirm
    file paths/findings reach the report.
 
@@ -116,3 +125,12 @@ Official references: [Render monorepos](https://render.com/docs/monorepo-support
 [Railway monorepos](https://docs.railway.com/deployments/monorepo),
 [Railway Dockerfiles](https://docs.railway.com/builds/dockerfiles),
 [Railway variables](https://docs.railway.com/variables).
+
+
+## Authentication and access checks
+
+Analysis, reports, and history require login. FastAPI scan routes additionally require the shared `ANALYSIS_SERVICE_TOKEN` header supplied by the gateway, using a FastAPI dependency. Keep this token exclusively in gateway/analysis environments. Backend services should use private networking where possible. The browser should access only the frontend origin and its `/api` proxy.
+
+All saved-report reads/deletes and history purges are scoped to the authenticated account. Client history imports are disabled. The application uses HttpOnly session cookies, not JWTs; Redis stores these revocable sessions. Set a stable, randomly generated SESSION_SECRET and the same ANALYSIS_SERVICE_TOKEN on both services before deploying. Existing MongoDB sessions are not reused when switching to Redis; users sign in again.
+
+`FRONTEND_URL` must exactly match the browser origin (including HTTPS and no trailing slash) for cross-site request protection. Auth/storage/scanner errors are displayed to users without exposing database credentials or stack traces.

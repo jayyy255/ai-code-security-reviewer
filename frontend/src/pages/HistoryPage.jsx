@@ -66,13 +66,13 @@ export default function HistoryPage() {
       <div className="history-header">
         <div className="flex items-center gap-4">
           <History size={24} className="purple-text" />
-          <h1>Analysis History Vault</h1>
+          <h1>Your reports</h1>
         </div>
         
         {history.length > 0 && (
           <button onClick={handleClearAll} className="btn btn-secondary flex items-center gap-4" style={{ color: 'var(--severity-critical)', borderColor: 'var(--severity-critical-border)' }}>
             <Trash2 size={16} />
-            Purge History
+            Clear history
           </button>
         )}
       </div>
@@ -86,7 +86,7 @@ export default function HistoryPage() {
                 <tr>
                   <th>Date & Time</th>
                   <th>Language</th>
-                  <th>Security Health</th>
+                  <th>Static score</th>
                   <th>Critical Issues</th>
                   <th>Findings Count</th>
                   <th>Actions</th>
@@ -95,7 +95,7 @@ export default function HistoryPage() {
               <tbody>
                 {history.map((item) => (
                   <tr key={item.analysis_id} onClick={() => navigateToResult(item)} style={{ cursor: 'pointer' }}>
-                    <td>
+                    <td data-label="Date & time">
                       {new Date(item.timestamp).toLocaleString(undefined, { 
                         month: 'short', 
                         day: 'numeric', 
@@ -103,27 +103,27 @@ export default function HistoryPage() {
                         minute: '2-digit' 
                       })}
                     </td>
-                    <td style={{ textTransform: 'capitalize' }}>
+                    <td data-label="Language" style={{ textTransform: 'capitalize' }}>
                       <span className="flex items-center gap-4">
                         <Code size={14} className="purple-text" />
                         {item.language}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Security score">
                       <span className={`score-cell-badge ${getScoreBadgeClass(item.score)}`}>
-                        {Math.round(item.score)}
+                        {item.score == null ? '—' : Math.round(item.score)}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Critical issues">
                       <div className={`critical-count-indicator ${item.critical > 0 ? 'active' : 'zero'}`}>
                         <ShieldAlert size={14} />
                         <span>{item.critical}</span>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Findings">
                       <span className="meta-value">{item.findings ? item.findings.length : 0} found</span>
                     </td>
-                    <td>
+                    <td data-label="Actions">
                       <div className="action-buttons-cell">
                         <button 
                           onClick={(e) => { e.stopPropagation(); navigateToResult(item); }} 

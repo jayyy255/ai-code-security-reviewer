@@ -29,12 +29,16 @@ class Finding(BaseModel):
     advisory_source: str = "local"
 
 class AnalyzeSummary(BaseModel):
-    security_score: float
+    security_score: float | None
     critical: int
     high: int
     medium: int
     low: int
     total_findings: int = 0
+    score_status: str = "assessed"
+    score_explanation: str = ""
+    scoring_version: str = "2.0"
+    distinct_issues: int = 0
 
 class ScannerStatusInfo(BaseModel):
     scanner_name: str
@@ -44,6 +48,7 @@ class ScannerStatusInfo(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     status_message: str = "Operational"
+    status: str = "completed"
 
 class MalwareStatusInfo(BaseModel):
     status: str # "clean", "suspicious", "infected", "unavailable", "failed"
@@ -105,3 +110,6 @@ class AnalyzeResponse(BaseModel):
     new_findings: list[Finding] = Field(default_factory=list)
     fixed_findings: list[Finding] = Field(default_factory=list)
     persistent_findings: list[Finding] = Field(default_factory=list)
+    review_scope: str | None = None
+    coverage: list[ScannerStatusInfo] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)

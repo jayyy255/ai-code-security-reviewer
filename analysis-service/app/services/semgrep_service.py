@@ -2,6 +2,7 @@ import json
 import subprocess
 import tempfile
 import os
+from itertools import islice
 try:
     import yaml
 except ImportError:
@@ -191,8 +192,20 @@ class SemgrepScanner(BaseScanner):
 
                 # Determine category
                 category = metadata.get("category") or "security"
-                raw_lines = extra.get("lines")
-                snippet = raw_lines.strip() if isinstance(raw_lines, str) and raw_lines.strip() else None
+                # Some Semgrep versions replace JSON `lines` with "requires login".
+                # Read the matched lines from our isolated input instead, never an
+                # arbitrary path from CLI output or a placeholder as code evidence.
+                snippet = None
+                source_path = Path(path_found).resolve()
+                scan_root = Path(target_path).resolve()
+                contained = source_path.is_relative_to(scan_root) if scan_root.is_dir() else source_path == scan_root
+                if contained and isinstance(line_num, int) and line_num > 0:
+                    try:
+                        end_line = finding.get("end", {}).get("line") or line_num
+                        with source_path.open(encoding="utf-8", errors="replace") as source:
+                            snippet = "".join(islice(source, line_num - 1, max(line_num, min(end_line, line_num + 2)))).strip()[:500] or None
+                    except (OSError, ValueError):
+                        pass
 
                 findings.append({
                     "scanner": "semgrep",

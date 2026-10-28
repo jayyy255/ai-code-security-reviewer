@@ -47,7 +47,7 @@ export default function LoginPage() {
             <Sparkles size={14} className="logo-sparkle" />
           </div>
           <h2>Access AI Code <span className="purple-text">Security Reviewer</span></h2>
-          <p>Login to secure your code & sync your analysis history</p>
+          <p>Sign in to analyze code and access your reports.</p>
         </div>
 
         {error && (

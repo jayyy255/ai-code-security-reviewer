@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import ProtectedRoute from './components/ProtectedRoute';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import LandingPage from './pages/LandingPage';
@@ -17,9 +18,9 @@ function App() {
         <main className="main-content-layout">
           <Routes>
             <Route path="/" element={<LandingPage />} />
-            <Route path="/analyze" element={<AnalyzePage />} />
-            <Route path="/results/:analysisId" element={<ResultsPage />} />
-            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/analyze" element={<ProtectedRoute><AnalyzePage /></ProtectedRoute>} />
+            <Route path="/results/:analysisId" element={<ProtectedRoute><ResultsPage /></ProtectedRoute>} />
+            <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignupPage />} />
           </Routes>

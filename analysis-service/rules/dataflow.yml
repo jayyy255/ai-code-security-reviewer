@@ -1,0 +1,99 @@
+rules:
+  - id: php-request-to-sql-dataflow
+    languages: [php]
+    mode: taint
+    message: Request-controlled input flows into a SQL query. Bind parameters instead of composing SQL text.
+    severity: ERROR
+    metadata:
+      category: injection
+      confidence: HIGH
+      cwe: ["CWE-89: SQL Injection"]
+      owasp: ["A03:2021 - Injection"]
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sanitizers:
+      - pattern: mysqli_real_escape_string(...)
+      - pattern: intval(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: mysqli_query($CONNECTION, $QUERY, ...)
+          - focus-metavariable: $QUERY
+      - patterns:
+          - pattern: $CONNECTION->query($QUERY, ...)
+          - focus-metavariable: $QUERY
+      - pattern: mysql_query(...)
+
+  - id: php-request-to-command-dataflow
+    languages: [php]
+    mode: taint
+    message: Request-controlled input reaches a shell execution function. Avoid the shell and allowlist command arguments.
+    severity: ERROR
+    metadata:
+      category: injection
+      confidence: HIGH
+      cwe: ["CWE-78: OS Command Injection"]
+      owasp: ["A03:2021 - Injection"]
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: intval(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($COMMAND, ...)
+              - pattern: exec($COMMAND, ...)
+              - pattern: shell_exec($COMMAND, ...)
+              - pattern: passthru($COMMAND, ...)
+          - focus-metavariable: $COMMAND
+
+  - id: python-request-to-shell-dataflow
+    languages: [python]
+    mode: taint
+    message: Request-controlled input reaches a shell command, including through intermediate variables.
+    severity: ERROR
+    metadata:
+      category: injection
+      confidence: HIGH
+      cwe: ["CWE-78: OS Command Injection"]
+      owasp: ["A03:2021 - Injection"]
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+      - pattern: input(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($COMMAND)
+              - pattern: subprocess.run($COMMAND, ..., shell=True, ...)
+              - pattern: subprocess.Popen($COMMAND, ..., shell=True, ...)
+          - focus-metavariable: $COMMAND
+
+  - id: javascript-request-to-shell-dataflow
+    languages: [javascript, typescript]
+    mode: taint
+    message: Request-controlled input flows into a shell command. Use execFile with separate arguments and an allowlist.
+    severity: ERROR
+    metadata:
+      category: injection
+      confidence: MEDIUM
+      cwe: ["CWE-78: OS Command Injection"]
+      owasp: ["A03:2021 - Injection"]
+    pattern-sources:
+      - pattern: req.query
+      - pattern: req.body
+      - pattern: req.params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: child_process.exec($COMMAND, ...)
+              - pattern: child_process.execSync($COMMAND, ...)
+              - pattern: exec($COMMAND, ...)
+              - pattern: execSync($COMMAND, ...)
+          - focus-metavariable: $COMMAND

@@ -7,6 +7,7 @@ A privacy-conscious, multi-mode security review platform that combines **Semgrep
 ## Key Features & 3 Scan Modes
 
 ### 1. Paste Code Mode
+- Language detection is automatic by default. Ambiguous snippets require a manual language choice; the dropdown also lets users override a detection.
 - Multi-language support covering all Semgrep-supported languages (Python, JavaScript, TypeScript, Java, Go, C/C++, C#, Ruby, PHP, Rust, Scala, Kotlin, Dockerfile, Terraform, YAML, JSON, Shell/Bash).
 - Input size validation & untrusted data isolation.
 - Active Prompt Injection Guard detecting override attempts, system prompt dumps, safety bypasses, and data exfiltration vectors.
@@ -14,6 +15,7 @@ A privacy-conscious, multi-mode security review platform that combines **Semgrep
 - Honest reporting: plain text streams never claim antivirus protection without a real malware engine.
 
 ### 2. Upload File / Archive Mode
+- Choose or drag multiple files, remove individual selections, and reselect the same file. The browser accepts up to 50 files and 50 MB total per scan.
 - Ingestion security with path traversal sanitization, binary file detection, and isolated sandbox directory cleanup.
 - ZIP Bomb & decompression protections (100:1 ratio limit, 100MB uncompressed limit, max 500 entries, recursive archive depth protection).
 - Strict execution safety: never executes uploaded scripts, never installs dependencies.
@@ -21,20 +23,13 @@ A privacy-conscious, multi-mode security review platform that combines **Semgrep
 - Safe document text extraction for PDF (`pypdf`) and Word (`python-docx`).
 - ClamAV malware scanning pipeline reporting: `clean`, `suspicious`, `infected`, `unavailable`, `failed`. Never reports false clean when scanner is unavailable or fails.
 
-### 3. GitHub Repository & Commit Mode
-- Supports GitHub URL, optional Branch, and optional Commit SHA.
-- Scans current commit state without traversing irrelevant repository history.
-- Two scan strategies:
-  - **Full Snapshot Scan**: Scans all relevant files in repository snapshot.
-  - **Incremental Commit Scan**: Calculates parent diff, identifies added/modified/renamed/deleted files, scans changed files, and compares against previous baseline.
-- **Automatic Fallback Triggers**: Forces a full scan when:
-  - No baseline exists or parent commit cannot be resolved
-  - Merge commit with multiple parents
-  - Large percentage of files changed (>30% in repos with 10+ files)
-  - Dependency lockfiles modified (`package-lock.json`, `yarn.lock`, `requirements.txt`, `go.sum`, `Cargo.lock`, `pom.xml`, etc.)
-  - Security configuration modified (`.semgrep.yml`, `.gitleaks.toml`, etc.)
-  - Explicit user choice.
-- Commit analysis returns classified findings: `new_findings`, `fixed_findings`, `persistent_findings`.
+### 3. GitHub Repository Review
+- Reviews the complete tracked snapshot of a public GitHub repository at the current default/selected branch HEAD, or an explicitly selected commit.
+- Runs local source/infrastructure security rules, secret detection, workflow configuration checks, supported dependency advisory lookups, prompt-injection pattern checks and ClamAV when available.
+- Shows severity, affected file/line, evidence, reasons and remediation. Records the resolved commit for reproducibility.
+- Reports failed checks and skipped files. Repository code, dependency installers, Git hooks, LFS filters and submodules are never executed.
+- Ignores caller-provided baselines and changed-files-only strategies; scores always cover the selected snapshot.
+- See [repository review scope and scoring](docs/repository-reviews.md) for limits, dependency formats, network requirements and the score formula.
 
 ---
 
@@ -92,7 +87,7 @@ The malware engine result is strictly one of:
                                                       - Gitleaks Secret Scanner
                                                       - ClamAV Malware Pipeline
                                                       - Ingestion & ZIP Bomb Sandbox
-                                                      - Git Commit Diff & Baseline Engine
+                                                      - Full Repository Snapshot Review
                                                       - Grounded AI Explainer (Gemini)
 ```
 
@@ -102,6 +97,8 @@ The malware engine result is strictly one of:
 
 ### 1. `POST /api/v1/files/scan`
 Scan single file or pasted code snippet.
+- Set `language` to `null` or `"auto"` and use `file_name: "snippet"` for automatic detection. Uncertain detection returns an actionable 422 error.
+- `POST /api/v1/language/detect` accepts the same code fields and returns `language` and `confidence` without running a scan. It requires a signed-in session through the gateway.
 - **Request Body**:
   ```json
   {
@@ -131,19 +128,19 @@ Scan uploaded files, configuration files, documents, or archives.
   - `ephemeral`: boolean
 
 ### 3. `POST /api/v1/commits/analyze`
-Analyze GitHub repository commit or full snapshot.
+Review a complete public GitHub repository snapshot. `branch` and `commit_sha` are optional; omit both for the current default branch. Legacy strategy/baseline fields are accepted but do not reduce review scope.
 - **Request Body**:
   ```json
   {
     "repository_url": "https://github.com/owner/repo",
     "commit_sha": "7a3f89e",
     "branch": "main",
-    "strategy": "auto",
+    "strategy": "full",
     "baseline_findings": [],
     "ephemeral": false
   }
   ```
-- **Response**: Includes `commit_sha`, `parent_sha`, `scan_type` (`full` vs `incremental`), `changed_files`, `new_findings`, `fixed_findings`, `persistent_findings`, `scanner_status`, and `malware_status`.
+- **Response**: Includes the resolved `commit_sha`, `parent_sha`, `scan_type: "commit"`, real `files_analyzed`, `files_skipped`, per-check `coverage`, `limitations`, findings and scoring metadata. This endpoint does not claim findings were fixed by comparing with an untrusted client baseline.
 
 ### 4. `GET /api/v1/scans/:scanId` & `DELETE /api/v1/scans/:scanId`
 Retrieve or purge a scan record from the history vault.
@@ -196,12 +193,18 @@ skipped for static analysis while original bytes remain eligible for malware
 scanning. Files are never executed. Unsupported or malformed documents are
 reported explicitly.
 
-Guest reports save findings/snippets in browser storage. Account reports save
+Analysis and saved reports require login. FastAPI scan routes accept only the
+authenticated gateway's shared `ANALYSIS_SERVICE_TOKEN`. Reports save
 findings/snippets in MongoDB, with owner-scoped retrieval and deletion. Complete
 submitted source is not saved. Ephemeral reports stay in page memory and disappear
 on a full reload; they are not written to localStorage, navigation state, or the
 vault. AI explanations use bounded finding-local snippets and redact secret
 findings; absent/unavailable Gemini falls back to labeled local remediation.
+
+Authentication uses HttpOnly session cookies. Set `REDIS_URL` on the gateway to
+store sessions in Redis; logout deletes the session and invalidates old-cookie
+replay. Local development without Redis uses MongoDB sessions. A configured but
+unavailable session store returns an error rather than permitting guest access.
 
 For Render/Railway roots, Docker settings, environment variables, cookies, and
 ClamAV signature setup, see [docs/deployment.md](docs/deployment.md).

@@ -1,7 +1,11 @@
-from fastapi import FastAPI, Request
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.analyze import router as scan_router
+from app.security import require_gateway
 from app.routers.health import router as health_router
 
 app = FastAPI(
@@ -28,7 +32,7 @@ async def root():
     }
 
 app.include_router(health_router)
-app.include_router(scan_router)
+app.include_router(scan_router, dependencies=[Depends(require_gateway)])
 
 @app.exception_handler(RuntimeError)
 async def scanner_failure(request: Request, exc: RuntimeError):

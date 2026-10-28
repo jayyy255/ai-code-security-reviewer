@@ -68,12 +68,12 @@ class GitleaksScanner(BaseScanner):
         combined = { (f.get("line"), f.get("rule_id")): f for f in (cli_findings + regex_findings) }
         return list(combined.values())
 
-    def scan_path(self, target_path: str) -> list[dict]:
+    def scan_path(self, target_path: str, strict: bool = False) -> list[dict]:
         if not os.path.exists(target_path):
             return []
 
         if self.executable:
-            findings = self._run_gitleaks_cli(target_path)
+            findings = self._run_gitleaks_cli(target_path, strict=strict)
             if findings:
                 return findings
 
@@ -97,7 +97,7 @@ class GitleaksScanner(BaseScanner):
                         pass
         return all_findings
 
-    def _run_gitleaks_cli(self, target_dir: str, file_name: str | None = None) -> list[dict]:
+    def _run_gitleaks_cli(self, target_dir: str, file_name: str | None = None, strict: bool = False) -> list[dict]:
         try:
             result = subprocess.run(
                 [self.executable, "dir", target_dir, "-f", "json", "-r", "-"],
@@ -108,7 +108,11 @@ class GitleaksScanner(BaseScanner):
                 timeout=60
             )
 
+            if result.returncode not in (0, 1):
+                raise RuntimeError("Gitleaks scan did not complete")
             if not result.stdout.strip():
+                if strict:
+                    raise RuntimeError("Gitleaks returned no scan report")
                 return []
 
             raw_findings = json.loads(result.stdout)
@@ -146,6 +150,8 @@ class GitleaksScanner(BaseScanner):
                 })
             return findings
         except Exception as e:
+            if strict:
+                raise RuntimeError("Secret scanning did not complete") from e
             print(f"Gitleaks CLI scan failed: {e}")
             return []
 
